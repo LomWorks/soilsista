@@ -6,8 +6,9 @@ export default function Home() {
     <div style={styles.container}>
       {/* Hero Section */}
       <motion.div
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={{ duration: 0.5 }}
         style={styles.hero}
       >
         <h1 style={styles.heroTitle}>
@@ -45,20 +46,20 @@ export default function Home() {
       {/* Features Section */}
       <div style={styles.features}>
         <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.2 }}
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ duration: 0.5, delay: 0.1 }}
           style={styles.feature}
         >
           <div style={styles.featureIcon}>🌦️</div>
           <h3>Weather Integration</h3>
-          <p>Real-time climate data from IICA to help you plan around weather patterns</p>
+          <p>Real-time climate data to help you plan around weather patterns</p>
         </motion.div>
 
         <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.3 }}
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ duration: 0.5, delay: 0.2 }}
           style={styles.feature}
         >
           <div style={styles.featureIcon}>📊</div>
@@ -67,9 +68,9 @@ export default function Home() {
         </motion.div>
 
         <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.4 }}
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ duration: 0.5, delay: 0.3 }}
           style={styles.feature}
         >
           <div style={styles.featureIcon}>💬</div>
@@ -82,7 +83,7 @@ export default function Home() {
       <motion.div
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
-        transition={{ delay: 0.6 }}
+        transition={{ duration: 0.5, delay: 0.4 }}
         style={styles.social}
       >
         <p style={styles.socialText}>

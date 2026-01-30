@@ -3,8 +3,12 @@ import Home from "./pages/Home";
 import About from "./pages/About";
 import Contact from "./pages/Contact";
 import Onboarding from "./pages/Onboarding";
+import EnhancedOnboarding from "./pages/EnhancedOnboarding";
+import Dashboard from "./pages/Dashboard";
+import AdminPanel from "./pages/Adminpanel";
 import Navbar from "./components/Navbar";
 import "./index.css";
+
 function App() {
   return (
     <Router>
@@ -14,6 +18,9 @@ function App() {
         <Route path="/about" element={<About />} />
         <Route path="/contact" element={<Contact />} />
         <Route path="/onboarding" element={<Onboarding />} />
+        <Route path="/get-started" element={<EnhancedOnboarding />} />
+        <Route path="/dashboard" element={<Dashboard />} />
+        <Route path="/admin" element={<AdminPanel />} />
       </Routes>
     </Router>
   );

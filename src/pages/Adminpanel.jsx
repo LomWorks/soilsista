@@ -152,8 +152,9 @@ export default function AdminPanel() {
     return (
       <div style={styles.loginContainer}>
         <motion.div
-          initial={{ opacity: 0, scale: 0.9 }}
-          animate={{ opacity: 1, scale: 1 }}
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ duration: 0.5 }}
           style={styles.loginBox}
         >
           <h1>🔒 Admin Panel</h1>
@@ -189,7 +190,12 @@ export default function AdminPanel() {
   return (
     <div style={styles.adminPanel}>
       {/* Header */}
-      <div style={styles.header}>
+      <motion.div
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={{ duration: 0.5 }}
+        style={styles.header}
+      >
         <div>
           <h1>🌱 Soil Sista Admin Panel</h1>
           <p style={styles.headerSubtitle}>Manage users, consultations, and data</p>
@@ -203,7 +209,7 @@ export default function AdminPanel() {
         >
           Logout
         </button>
-      </div>
+      </motion.div>
 
       {/* Stats Cards */}
       <div style={styles.statsGrid}>
@@ -212,24 +218,28 @@ export default function AdminPanel() {
           label="Free Users" 
           value={stats.totalFreeUsers}
           color="#7FB34D"
+          delay={0.1}
         />
         <StatCard 
           icon="💬" 
           label="Paid Users" 
           value={stats.totalPaidUsers}
           color="#5A9F6E"
+          delay={0.2}
         />
         <StatCard 
           icon="⏳" 
           label="Pending Consultations" 
           value={stats.pendingConsultations}
           color="#E6A93C"
+          delay={0.3}
         />
         <StatCard 
           icon="✉️" 
           label="Contact Messages" 
           value={stats.totalMessages}
           color="#EFA8B8"
+          delay={0.4}
         />
       </div>
 
@@ -290,11 +300,12 @@ export default function AdminPanel() {
 }
 
 // Stats Card Component
-function StatCard({ icon, label, value, color }) {
+function StatCard({ icon, label, value, color, delay }) {
   return (
     <motion.div
-      initial={{ opacity: 0, y: 20 }}
-      animate={{ opacity: 1, y: 0 }}
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      transition={{ duration: 0.5, delay }}
       style={{...styles.statCard, borderLeft: `4px solid ${color}`}}
     >
       <div style={styles.statIcon}>{icon}</div>
@@ -316,6 +327,7 @@ function OverviewTab({ freeUsers, paidUsers, stats }) {
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
+      transition={{ duration: 0.3 }}
     >
       <h2>Recent Activity</h2>
       
@@ -376,6 +388,7 @@ function FreeUsersTab({ users, onDelete, onExport }) {
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
+      transition={{ duration: 0.3 }}
     >
       <div style={styles.tableHeader}>
         <h2>Free Users ({users.length})</h2>
@@ -458,6 +471,7 @@ function PaidUsersTab({ users, onStatusUpdate, onDelete, onExport }) {
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
+      transition={{ duration: 0.3 }}
     >
       <div style={styles.tableHeader}>
         <h2>Paid Users - WhatsApp Consultations ({users.length})</h2>
@@ -536,6 +550,7 @@ function MessagesTab({ messages, onDelete }) {
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
+      transition={{ duration: 0.3 }}
     >
       <h2>Contact Messages ({messages.length})</h2>
 
@@ -543,11 +558,12 @@ function MessagesTab({ messages, onDelete }) {
         {messages.length === 0 ? (
           <p style={styles.emptyState}>No messages yet</p>
         ) : (
-          messages.map(message => (
+          messages.map((message, index) => (
             <motion.div
               key={message.id}
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ duration: 0.5, delay: index * 0.05 }}
               style={styles.messageCard}
             >
               <div style={styles.messageHeader}>
@@ -576,8 +592,9 @@ function UserDetailModal({ user, onClose }) {
   return (
     <div style={styles.modalOverlay} onClick={onClose}>
       <motion.div
-        initial={{ opacity: 0, scale: 0.9 }}
-        animate={{ opacity: 1, scale: 1 }}
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={{ duration: 0.3 }}
         onClick={(e) => e.stopPropagation()}
         style={styles.modal}
       >

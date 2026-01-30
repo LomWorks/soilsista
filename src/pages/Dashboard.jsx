@@ -27,8 +27,9 @@ export default function Dashboard() {
     <div style={styles.dashboard}>
       {/* Header */}
       <motion.div
-        initial={{ opacity: 0, y: -20 }}
-        animate={{ opacity: 1, y: 0 }}
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={{ duration: 0.5 }}
         style={styles.header}
       >
         <h1>Welcome back, {userData.name}! 🌱</h1>
@@ -72,8 +73,9 @@ function OverviewTab({ userData }) {
       <div style={styles.grid}>
         {/* Quick Stats */}
         <motion.div
-          initial={{ opacity: 0, scale: 0.95 }}
-          animate={{ opacity: 1, scale: 1 }}
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ duration: 0.5, delay: 0.1 }}
           style={styles.card}
         >
           <h3>🌾 Your Farm</h3>
@@ -91,9 +93,9 @@ function OverviewTab({ userData }) {
 
         {/* Current Crops */}
         <motion.div
-          initial={{ opacity: 0, scale: 0.95 }}
-          animate={{ opacity: 1, scale: 1 }}
-          transition={{ delay: 0.1 }}
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ duration: 0.5, delay: 0.2 }}
           style={styles.card}
         >
           <h3>🥬 Growing Now</h3>
@@ -109,9 +111,9 @@ function OverviewTab({ userData }) {
 
         {/* Weather Alert */}
         <motion.div
-          initial={{ opacity: 0, scale: 0.95 }}
-          animate={{ opacity: 1, scale: 1 }}
-          transition={{ delay: 0.2 }}
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ duration: 0.5, delay: 0.3 }}
           style={{...styles.card, ...styles.alertCard}}
         >
           <h3>🌦️ Weather Alert</h3>
@@ -125,9 +127,9 @@ function OverviewTab({ userData }) {
 
         {/* Next Actions */}
         <motion.div
-          initial={{ opacity: 0, scale: 0.95 }}
-          animate={{ opacity: 1, scale: 1 }}
-          transition={{ delay: 0.3 }}
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ duration: 0.5, delay: 0.4 }}
           style={styles.card}
         >
           <h3>📋 This Week's Tasks</h3>
@@ -157,20 +159,30 @@ function TaskItem({ task, date }) {
 // Planner Tab
 function PlannerTab({ userData }) {
   return (
-    <div style={styles.tabContent}>
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      transition={{ duration: 0.5 }}
+      style={styles.tabContent}
+    >
       <h2>🗓️ Crop Planning Tool</h2>
       <p style={styles.description}>
         Plan your planting schedule based on crop cycles and climate data
       </p>
       <CropPlanner userData={userData} />
-    </div>
+    </motion.div>
   );
 }
 
 // Weather Tab
 function WeatherTab({ userData }) {
   return (
-    <div style={styles.tabContent}>
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      transition={{ duration: 0.5 }}
+      style={styles.tabContent}
+    >
       <h2>🌤️ Climate & Weather Data</h2>
       <p style={styles.description}>
         Real-time weather and climate insights for {userData.location.island}
@@ -178,22 +190,37 @@ function WeatherTab({ userData }) {
       <WeatherWidget location={userData.location} />
       
       <div style={styles.weatherGrid}>
-        <div style={styles.weatherCard}>
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ duration: 0.5, delay: 0.1 }}
+          style={styles.weatherCard}
+        >
           <h3>7-Day Forecast</h3>
-          <p>Integration with IICA weather API coming soon</p>
-        </div>
+          <p>Integration with weather API coming soon</p>
+        </motion.div>
         
-        <div style={styles.weatherCard}>
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ duration: 0.5, delay: 0.2 }}
+          style={styles.weatherCard}
+        >
           <h3>Seasonal Trends</h3>
           <p>Historical climate data analysis</p>
-        </div>
+        </motion.div>
         
-        <div style={styles.weatherCard}>
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ duration: 0.5, delay: 0.3 }}
+          style={styles.weatherCard}
+        >
           <h3>Rainfall Tracker</h3>
           <p>Monthly precipitation patterns</p>
-        </div>
+        </motion.div>
       </div>
-    </div>
+    </motion.div>
   );
 }
 
@@ -233,7 +260,12 @@ function ResourcesTab() {
   ];
 
   return (
-    <div style={styles.tabContent}>
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      transition={{ duration: 0.5 }}
+      style={styles.tabContent}
+    >
       <h2>📚 Farming Resources</h2>
       <p style={styles.description}>
         Educational materials to help you grow better
@@ -243,9 +275,9 @@ function ResourcesTab() {
         {resources.map((resource, i) => (
           <motion.div
             key={i}
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: i * 0.1 }}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ duration: 0.5, delay: 0.1 + (i * 0.05) }}
             whileHover={{ scale: 1.02 }}
             style={styles.resourceCard}
           >
@@ -256,7 +288,7 @@ function ResourcesTab() {
           </motion.div>
         ))}
       </div>
-    </div>
+    </motion.div>
   );
 }
 

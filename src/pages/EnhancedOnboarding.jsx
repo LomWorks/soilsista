@@ -88,8 +88,9 @@ export default function EnhancedOnboarding() {
     return (
       <div style={styles.page}>
         <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ duration: 0.5 }}
           style={styles.planSelection}
         >
           <h1>Welcome to Soil Sista</h1>
@@ -98,6 +99,9 @@ export default function EnhancedOnboarding() {
           <div style={styles.planCards}>
             {/* Free Plan Card */}
             <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ duration: 0.5, delay: 0.1 }}
               whileHover={{ scale: 1.02 }}
               onClick={() => setPlanType("free")}
               style={styles.planCard}
@@ -115,6 +119,9 @@ export default function EnhancedOnboarding() {
 
             {/* Paid Plan Card */}
             <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ duration: 0.5, delay: 0.2 }}
               whileHover={{ scale: 1.02 }}
               onClick={() => setPlanType("paid")}
               style={{...styles.planCard, ...styles.paidCard}}
@@ -147,9 +154,10 @@ export default function EnhancedOnboarding() {
         <AnimatePresence mode="wait">
           <motion.div
             key={step}
-            initial={{ opacity: 0, x: 50 }}
-            animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: -50 }}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.3 }}
             style={styles.formContainer}
           >
             {step === 0 && <BasicInfo data={freeData} setData={setFreeData} />}
@@ -187,8 +195,9 @@ export default function EnhancedOnboarding() {
     return (
       <div style={styles.page}>
         <motion.div
-          initial={{ opacity: 0, scale: 0.95 }}
-          animate={{ opacity: 1, scale: 1 }}
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ duration: 0.5 }}
           style={styles.quickForm}
         >
           <h1>Quick Setup (60 seconds)</h1>
@@ -260,6 +269,7 @@ function ProgressBar({ current, total }) {
         <motion.div
           initial={{ width: 0 }}
           animate={{ width: `${((current + 1) / total) * 100}%` }}
+          transition={{ duration: 0.3 }}
           style={styles.progressFill}
         />
       </div>
@@ -461,8 +471,9 @@ function CropsInfo({ data, setData }) {
           {data.crops.map((crop, index) => (
             <motion.div
               key={index}
-              initial={{ scale: 0 }}
-              animate={{ scale: 1 }}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ duration: 0.3 }}
               style={styles.tag}
             >
               {crop}
@@ -613,8 +624,9 @@ function DiseasesInfo({ data, setData }) {
           {data.diseases.map((disease, index) => (
             <motion.div
               key={index}
-              initial={{ opacity: 0, y: -10 }}
-              animate={{ opacity: 1, y: 0 }}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ duration: 0.3 }}
               style={styles.diseaseItem}
             >
               <div>
