@@ -1,26 +1,34 @@
 import React, { useState, useEffect } from "react";
 import { db } from "../firebase";
-import { collection, getDocs, doc, updateDoc, deleteDoc, query, orderBy } from "firebase/firestore";
+import { collection, getDocs, doc, updateDoc, deleteDoc, query, orderBy, where, limit } from "firebase/firestore";
 import { motion, AnimatePresence } from "framer-motion";
 
 export default function AdminPanel() {
   const [activeTab, setActiveTab] = useState("overview");
-  const [freeUsers, setFreeUsers] = useState([]);
-  const [paidUsers, setPaidUsers] = useState([]);
-  const [contactMessages, setContactMessages] = useState([]);
+  const [users, setUsers] = useState([]);
+  const [activities, setActivities] = useState([]);
+  const [adminNotifications, setAdminNotifications] = useState([]);
   const [loading, setLoading] = useState(true);
   const [stats, setStats] = useState({
-    totalFreeUsers: 0,
-    totalPaidUsers: 0,
+    totalUsers: 0,
+    activeUsers: 0,
     pendingConsultations: 0,
-    totalMessages: 0
+    unreadNotifications: 0,
+    todayAlerts: 0
   });
 
-  // Password protection - simple version
+  // Password protection
   const [authenticated, setAuthenticated] = useState(false);
   const [password, setPassword] = useState("");
 
-  const ADMIN_PASSWORD = "soilsista2025"; // Change this in production!
+  const ADMIN_PASSWORD = "soilsista2025";
+
+  useEffect(() => {
+    const savedAuth = localStorage.getItem("adminAuth");
+    if (savedAuth === "true") {
+      setAuthenticated(true);
+    }
+  }, []);
 
   useEffect(() => {
     if (authenticated) {
@@ -40,45 +48,68 @@ export default function AdminPanel() {
   const fetchAllData = async () => {
     setLoading(true);
     try {
-      // Fetch Free Users
-      const freeSnapshot = await getDocs(
-        query(collection(db, "freeUserProfiles"), orderBy("createdAt", "desc"))
+      // Fetch All Users
+      const usersSnapshot = await getDocs(
+        query(collection(db, "users"), orderBy("createdAt", "desc"))
       );
-      const freeData = freeSnapshot.docs.map(doc => ({
+      const usersData = usersSnapshot.docs.map(doc => ({
         id: doc.id,
         ...doc.data(),
-        createdAt: doc.data().createdAt?.toDate().toLocaleDateString()
+        createdAt: doc.data().createdAt?.toDate().toLocaleDateString(),
+        lastActive: doc.data().stats?.lastActive?.toDate().toLocaleDateString()
       }));
-      setFreeUsers(freeData);
+      setUsers(usersData);
 
-      // Fetch Paid Users
-      const paidSnapshot = await getDocs(
-        query(collection(db, "paidUserProfiles"), orderBy("createdAt", "desc"))
+      // Fetch Admin Notifications
+      const adminNotifSnapshot = await getDocs(
+        query(
+          collection(db, "activities"),
+          where("type", "==", "admin_notification"),
+          orderBy("createdAt", "desc"),
+          limit(100)
+        )
       );
-      const paidData = paidSnapshot.docs.map(doc => ({
+      const adminNotifData = adminNotifSnapshot.docs.map(doc => ({
         id: doc.id,
         ...doc.data(),
-        status: doc.data().status || "pending",
-        createdAt: doc.data().createdAt?.toDate().toLocaleDateString()
+        createdAt: doc.data().createdAt?.toDate().toLocaleString()
       }));
-      setPaidUsers(paidData);
+      setAdminNotifications(adminNotifData);
 
-      // Fetch Contact Messages
-      const contactSnapshot = await getDocs(
-        query(collection(db, "contactMessages"))
+      // Fetch All Activities
+      const activitiesSnapshot = await getDocs(
+        query(
+          collection(db, "activities"),
+          orderBy("createdAt", "desc"),
+          limit(200)
+        )
       );
-      const contactData = contactSnapshot.docs.map(doc => ({
+      const activitiesData = activitiesSnapshot.docs.map(doc => ({
         id: doc.id,
-        ...doc.data()
+        ...doc.data(),
+        createdAt: doc.data().createdAt?.toDate().toLocaleString()
       }));
-      setContactMessages(contactData);
+      setActivities(activitiesData);
 
       // Calculate stats
+      const activeUsersCount = usersData.filter(u => u.accountStatus === "active").length;
+      const pendingConsultations = usersData.filter(
+        u => u.planType === "paid" && u.consultationStatus === "pending"
+      ).length;
+      const unreadNotifications = adminNotifData.filter(n => n.status === "unread").length;
+      
+      const today = new Date().toDateString();
+      const todayAlerts = activitiesData.filter(a => {
+        const activityDate = a.createdAt ? new Date(a.createdAt).toDateString() : null;
+        return a.type === "weather_alert" && activityDate === today;
+      }).length;
+
       setStats({
-        totalFreeUsers: freeData.length,
-        totalPaidUsers: paidData.length,
-        pendingConsultations: paidData.filter(u => u.status === "pending").length,
-        totalMessages: contactData.length
+        totalUsers: usersData.length,
+        activeUsers: activeUsersCount,
+        pendingConsultations,
+        unreadNotifications,
+        todayAlerts
       });
 
     } catch (error) {
@@ -88,11 +119,21 @@ export default function AdminPanel() {
     setLoading(false);
   };
 
-  const updateUserStatus = async (userId, newStatus, isPaid = true) => {
+  const markNotificationAsRead = async (notificationId) => {
     try {
-      const collectionName = isPaid ? "paidUserProfiles" : "freeUserProfiles";
-      await updateDoc(doc(db, collectionName, userId), {
-        status: newStatus,
+      await updateDoc(doc(db, "activities", notificationId), {
+        status: "read"
+      });
+      fetchAllData();
+    } catch (error) {
+      console.error("Error marking as read:", error);
+    }
+  };
+
+  const updateUserConsultationStatus = async (userId, newStatus) => {
+    try {
+      await updateDoc(doc(db, "users", userId), {
+        consultationStatus: newStatus,
         updatedAt: new Date()
       });
       alert("Status updated!");
@@ -103,12 +144,11 @@ export default function AdminPanel() {
     }
   };
 
-  const deleteUser = async (userId, isPaid = true) => {
+  const deleteUser = async (userId) => {
     if (!window.confirm("Are you sure you want to delete this user?")) return;
     
     try {
-      const collectionName = isPaid ? "paidUserProfiles" : "freeUserProfiles";
-      await deleteDoc(doc(db, collectionName, userId));
+      await deleteDoc(doc(db, "users", userId));
       alert("User deleted!");
       fetchAllData();
     } catch (error) {
@@ -117,25 +157,29 @@ export default function AdminPanel() {
     }
   };
 
-  const deleteMessage = async (messageId) => {
-    if (!window.confirm("Delete this message?")) return;
-    
+  const deleteNotification = async (notificationId) => {
     try {
-      await deleteDoc(doc(db, "contactMessages", messageId));
-      alert("Message deleted!");
+      await deleteDoc(doc(db, "activities", notificationId));
       fetchAllData();
     } catch (error) {
-      console.error("Error deleting message:", error);
-      alert("Failed to delete message");
+      console.error("Error deleting notification:", error);
     }
   };
 
   const exportToCSV = (data, filename) => {
+    if (data.length === 0) {
+      alert("No data to export");
+      return;
+    }
+    
     const headers = Object.keys(data[0]).join(",");
     const rows = data.map(item => 
-      Object.values(item).map(val => 
-        typeof val === 'object' ? JSON.stringify(val) : val
-      ).join(",")
+      Object.values(item).map(val => {
+        if (typeof val === 'object' && val !== null) {
+          return JSON.stringify(val).replace(/,/g, ';');
+        }
+        return val;
+      }).join(",")
     );
     const csv = [headers, ...rows].join("\n");
     
@@ -152,13 +196,13 @@ export default function AdminPanel() {
     return (
       <div style={styles.loginContainer}>
         <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.5 }}
           style={styles.loginBox}
         >
           <h1>🔒 Admin Panel</h1>
-          <p style={styles.loginSubtitle}>Enter admin password to continue</p>
+          <p style={styles.loginSubtitle}>Soil Sista Administration</p>
           
           <input
             type="password"
@@ -167,6 +211,7 @@ export default function AdminPanel() {
             onChange={(e) => setPassword(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && handleLogin()}
             style={styles.passwordInput}
+            autoFocus
           />
           
           <button onClick={handleLogin} style={styles.loginButton}>
@@ -197,64 +242,86 @@ export default function AdminPanel() {
         style={styles.header}
       >
         <div>
-          <h1>🌱 Soil Sista Admin Panel</h1>
-          <p style={styles.headerSubtitle}>Manage users, consultations, and data</p>
+          <h1>🌱 Soil Sista Admin</h1>
+          <p style={styles.headerSubtitle}>
+            Manage users, consultations, and system activities
+          </p>
         </div>
-        <button 
-          onClick={() => {
-            setAuthenticated(false);
-            localStorage.removeItem("adminAuth");
-          }}
-          style={styles.logoutButton}
-        >
-          Logout
-        </button>
+        <div style={styles.headerActions}>
+          <button onClick={fetchAllData} style={styles.refreshButton}>
+            🔄 Refresh
+          </button>
+          <button 
+            onClick={() => {
+              setAuthenticated(false);
+              localStorage.removeItem("adminAuth");
+            }}
+            style={styles.logoutButton}
+          >
+            Logout
+          </button>
+        </div>
       </motion.div>
 
       {/* Stats Cards */}
       <div style={styles.statsGrid}>
         <StatCard 
           icon="👥" 
-          label="Free Users" 
-          value={stats.totalFreeUsers}
+          label="Total Users" 
+          value={stats.totalUsers}
+          subtitle={`${stats.activeUsers} active`}
           color="#7FB34D"
           delay={0.1}
         />
         <StatCard 
           icon="💬" 
-          label="Paid Users" 
-          value={stats.totalPaidUsers}
-          color="#5A9F6E"
-          delay={0.2}
-        />
-        <StatCard 
-          icon="⏳" 
           label="Pending Consultations" 
           value={stats.pendingConsultations}
+          subtitle="Need attention"
           color="#E6A93C"
-          delay={0.3}
+          delay={0.2}
+          highlight={stats.pendingConsultations > 0}
         />
         <StatCard 
-          icon="✉️" 
-          label="Contact Messages" 
-          value={stats.totalMessages}
+          icon="🔔" 
+          label="Unread Notifications" 
+          value={stats.unreadNotifications}
+          subtitle="New messages"
           color="#EFA8B8"
+          delay={0.3}
+          highlight={stats.unreadNotifications > 0}
+        />
+        <StatCard 
+          icon="🌦️" 
+          label="Today's Alerts" 
+          value={stats.todayAlerts}
+          subtitle="Weather alerts sent"
+          color="#5A9F6E"
           delay={0.4}
         />
       </div>
 
       {/* Tab Navigation */}
       <div style={styles.tabs}>
-        {["overview", "free-users", "paid-users", "messages"].map(tab => (
+        {[
+          { key: "overview", label: "Overview", badge: null },
+          { key: "notifications", label: "Notifications", badge: stats.unreadNotifications },
+          { key: "users", label: "All Users", badge: null },
+          { key: "consultations", label: "Consultations", badge: stats.pendingConsultations },
+          { key: "activities", label: "Activities", badge: null }
+        ].map(tab => (
           <button
-            key={tab}
-            onClick={() => setActiveTab(tab)}
+            key={tab.key}
+            onClick={() => setActiveTab(tab.key)}
             style={{
               ...styles.tab,
-              ...(activeTab === tab ? styles.tabActive : {})
+              ...(activeTab === tab.key ? styles.tabActive : {})
             }}
           >
-            {tab.split('-').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ')}
+            {tab.label}
+            {tab.badge > 0 && (
+              <span style={styles.tabBadge}>{tab.badge}</span>
+            )}
           </button>
         ))}
       </div>
@@ -264,33 +331,41 @@ export default function AdminPanel() {
         <AnimatePresence mode="wait">
           {activeTab === "overview" && (
             <OverviewTab 
-              freeUsers={freeUsers}
-              paidUsers={paidUsers}
+              users={users}
+              notifications={adminNotifications}
+              activities={activities}
               stats={stats}
             />
           )}
           
-          {activeTab === "free-users" && (
-            <FreeUsersTab 
-              users={freeUsers}
-              onDelete={deleteUser}
-              onExport={() => exportToCSV(freeUsers, "free_users")}
+          {activeTab === "notifications" && (
+            <NotificationsTab 
+              notifications={adminNotifications}
+              onMarkAsRead={markNotificationAsRead}
+              onDelete={deleteNotification}
             />
           )}
           
-          {activeTab === "paid-users" && (
-            <PaidUsersTab 
-              users={paidUsers}
-              onStatusUpdate={updateUserStatus}
+          {activeTab === "users" && (
+            <UsersTab 
+              users={users}
               onDelete={deleteUser}
-              onExport={() => exportToCSV(paidUsers, "paid_users")}
+              onExport={() => exportToCSV(users, "all_users")}
             />
           )}
           
-          {activeTab === "messages" && (
-            <MessagesTab 
-              messages={contactMessages}
-              onDelete={deleteMessage}
+          {activeTab === "consultations" && (
+            <ConsultationsTab 
+              users={users.filter(u => u.planType === "paid")}
+              onStatusUpdate={updateUserConsultationStatus}
+              onDelete={deleteUser}
+              onExport={() => exportToCSV(users.filter(u => u.planType === "paid"), "consultations")}
+            />
+          )}
+          
+          {activeTab === "activities" && (
+            <ActivitiesTab 
+              activities={activities}
             />
           )}
         </AnimatePresence>
@@ -300,27 +375,35 @@ export default function AdminPanel() {
 }
 
 // Stats Card Component
-function StatCard({ icon, label, value, color, delay }) {
+function StatCard({ icon, label, value, subtitle, color, delay, highlight }) {
   return (
     <motion.div
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.5, delay }}
-      style={{...styles.statCard, borderLeft: `4px solid ${color}`}}
+      style={{
+        ...styles.statCard,
+        borderLeft: `4px solid ${color}`,
+        ...(highlight ? { boxShadow: `0 4px 12px ${color}40` } : {})
+      }}
     >
       <div style={styles.statIcon}>{icon}</div>
       <div>
         <div style={styles.statValue}>{value}</div>
         <div style={styles.statLabel}>{label}</div>
+        {subtitle && <div style={styles.statSubtitle}>{subtitle}</div>}
       </div>
     </motion.div>
   );
 }
 
 // Overview Tab
-function OverviewTab({ freeUsers, paidUsers, stats }) {
-  const recentFree = freeUsers.slice(0, 5);
-  const recentPaid = paidUsers.slice(0, 5);
+function OverviewTab({ users, notifications, activities, stats }) {
+  const recentUsers = users.slice(0, 5);
+  const urgentNotifications = notifications.filter(n => 
+    n.status === "unread" && n.priority === "high"
+  ).slice(0, 3);
+  const recentActivities = activities.slice(0, 8);
 
   return (
     <motion.div
@@ -329,41 +412,72 @@ function OverviewTab({ freeUsers, paidUsers, stats }) {
       exit={{ opacity: 0 }}
       transition={{ duration: 0.3 }}
     >
-      <h2>Recent Activity</h2>
+      <h2>Dashboard Overview</h2>
       
+      {/* Urgent Section */}
+      {urgentNotifications.length > 0 && (
+        <div style={styles.urgentSection}>
+          <h3 style={styles.urgentTitle}>🔥 Urgent - Needs Attention</h3>
+          {urgentNotifications.map(notif => (
+            <div key={notif.id} style={styles.urgentItem}>
+              <div>
+                <strong>{notif.title}</strong>
+                <p style={styles.urgentMessage}>{notif.message}</p>
+              </div>
+              <button
+                onClick={() => window.location.hash = "#notifications"}
+                style={styles.urgentButton}
+              >
+                View
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
       <div style={styles.overviewGrid}>
+        {/* Recent Users */}
         <div style={styles.overviewSection}>
-          <h3>Recent Free Users</h3>
-          {recentFree.length === 0 ? (
+          <h3>Recent Users</h3>
+          {recentUsers.length === 0 ? (
             <p style={styles.emptyState}>No users yet</p>
           ) : (
-            recentFree.map(user => (
+            recentUsers.map(user => (
               <div key={user.id} style={styles.overviewItem}>
-                <strong>{user.name}</strong>
-                <span style={styles.overviewDate}>{user.createdAt}</span>
+                <div>
+                  <strong>{user.name || "No name"}</strong>
+                  <div style={styles.overviewMeta}>
+                    {user.planType === "paid" ? "💬 Paid" : "🌱 Free"} • {user.location?.island || "Unknown"}
+                  </div>
+                </div>
+                <span style={{
+                  ...styles.statusBadge,
+                  backgroundColor: user.accountStatus === "active" ? "#7FB34D" : "#999"
+                }}>
+                  {user.accountStatus || "pending"}
+                </span>
               </div>
             ))
           )}
         </div>
 
+        {/* Recent Activity Feed */}
         <div style={styles.overviewSection}>
-          <h3>Recent Paid Users (Need Consultation)</h3>
-          {recentPaid.length === 0 ? (
-            <p style={styles.emptyState}>No users yet</p>
+          <h3>Recent Activity</h3>
+          {recentActivities.length === 0 ? (
+            <p style={styles.emptyState}>No activities yet</p>
           ) : (
-            recentPaid.map(user => (
-              <div key={user.id} style={styles.overviewItem}>
-                <div>
-                  <strong>{user.name}</strong>
-                  <div style={styles.phoneNumber}>📱 {user.phone}</div>
-                </div>
-                <span style={{
-                  ...styles.statusBadge,
-                  backgroundColor: user.status === "pending" ? "#E6A93C" : 
-                                  user.status === "contacted" ? "#7FB34D" : "#666"
-                }}>
-                  {user.status || "pending"}
+            recentActivities.map(activity => (
+              <div key={activity.id} style={styles.activityItem}>
+                <span style={styles.activityIcon}>
+                  {activity.icon || getActivityIcon(activity.type)}
                 </span>
+                <div style={styles.activityContent}>
+                  <strong>{activity.title}</strong>
+                  <div style={styles.activityMeta}>
+                    {activity.type} • {activity.createdAt}
+                  </div>
+                </div>
               </div>
             ))
           )}
@@ -373,15 +487,16 @@ function OverviewTab({ freeUsers, paidUsers, stats }) {
   );
 }
 
-// Free Users Tab
-function FreeUsersTab({ users, onDelete, onExport }) {
-  const [searchTerm, setSearchTerm] = useState("");
-  const [selectedUser, setSelectedUser] = useState(null);
+// Notifications Tab
+function NotificationsTab({ notifications, onMarkAsRead, onDelete }) {
+  const [filter, setFilter] = useState("all");
 
-  const filteredUsers = users.filter(user => 
-    user.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    user.location?.island?.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  const filteredNotifications = notifications.filter(notif => {
+    if (filter === "unread") return notif.status === "unread";
+    if (filter === "contact") return notif.data?.contactType === "contact_form";
+    if (filter === "consultation") return notif.data?.consultationType === "paid";
+    return true;
+  });
 
   return (
     <motion.div
@@ -391,11 +506,165 @@ function FreeUsersTab({ users, onDelete, onExport }) {
       transition={{ duration: 0.3 }}
     >
       <div style={styles.tableHeader}>
-        <h2>Free Users ({users.length})</h2>
+        <h2>Admin Notifications ({notifications.length})</h2>
+        <div style={styles.filterButtons}>
+          <button
+            onClick={() => setFilter("all")}
+            style={{...styles.filterButton, ...(filter === "all" ? styles.filterActive : {})}}
+          >
+            All
+          </button>
+          <button
+            onClick={() => setFilter("unread")}
+            style={{...styles.filterButton, ...(filter === "unread" ? styles.filterActive : {})}}
+          >
+            Unread
+          </button>
+          <button
+            onClick={() => setFilter("contact")}
+            style={{...styles.filterButton, ...(filter === "contact" ? styles.filterActive : {})}}
+          >
+            Contact Forms
+          </button>
+          <button
+            onClick={() => setFilter("consultation")}
+            style={{...styles.filterButton, ...(filter === "consultation" ? styles.filterActive : {})}}
+          >
+            Consultations
+          </button>
+        </div>
+      </div>
+
+      <div style={styles.notificationsContainer}>
+        {filteredNotifications.length === 0 ? (
+          <p style={styles.emptyState}>No notifications</p>
+        ) : (
+          filteredNotifications.map((notif, index) => (
+            <motion.div
+              key={notif.id}
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.3, delay: index * 0.05 }}
+              style={{
+                ...styles.notificationCard,
+                ...(notif.status === "unread" ? styles.notificationUnread : {}),
+                ...(notif.priority === "high" ? styles.notificationHigh : {})
+              }}
+            >
+              <div style={styles.notificationHeader}>
+                <div style={styles.notificationTitle}>
+                  <span style={styles.notificationIcon}>{notif.icon}</span>
+                  <strong>{notif.title}</strong>
+                  {notif.priority === "high" && (
+                    <span style={styles.priorityBadge}>HIGH PRIORITY</span>
+                  )}
+                  {notif.status === "unread" && (
+                    <span style={styles.unreadDot}></span>
+                  )}
+                </div>
+                <div style={styles.notificationActions}>
+                  {notif.status === "unread" && (
+                    <button
+                      onClick={() => onMarkAsRead(notif.id)}
+                      style={styles.markReadButton}
+                    >
+                      Mark Read
+                    </button>
+                  )}
+                  <button
+                    onClick={() => onDelete(notif.id)}
+                    style={styles.deleteIconButton}
+                  >
+                    ×
+                  </button>
+                </div>
+              </div>
+
+              <p style={styles.notificationMessage}>{notif.message}</p>
+
+              {notif.data && (
+                <div style={styles.notificationDetails}>
+                  {notif.data.userName && (
+                    <div><strong>Name:</strong> {notif.data.userName}</div>
+                  )}
+                  {notif.data.userPhone && (
+                    <div>
+                      <strong>Phone:</strong>{" "}
+                      <a href={`https://wa.me/${notif.data.userPhone}`} style={styles.phoneLink}>
+                        {notif.data.userPhone}
+                      </a>
+                    </div>
+                  )}
+                  {notif.data.userLocation && (
+                    <div>
+                      <strong>Location:</strong> {notif.data.userLocation.island}, {notif.data.userLocation.settlement}
+                    </div>
+                  )}
+                  {notif.data.issue && (
+                    <div><strong>Issue:</strong> {notif.data.issue}</div>
+                  )}
+                </div>
+              )}
+
+              <div style={styles.notificationFooter}>
+                <span style={styles.notificationDate}>{notif.createdAt}</span>
+                {notif.actionUrl && (
+                  <a href={notif.actionUrl} style={styles.actionLink}>
+                    {notif.actionLabel || "View"}
+                  </a>
+                )}
+              </div>
+            </motion.div>
+          ))
+        )}
+      </div>
+    </motion.div>
+  );
+}
+
+// Users Tab
+function UsersTab({ users, onDelete, onExport }) {
+  const [searchTerm, setSearchTerm] = useState("");
+  const [filterType, setFilterType] = useState("all");
+
+  const filteredUsers = users.filter(user => {
+    const matchesSearch = 
+      user.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      user.location?.island?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      user.email?.toLowerCase().includes(searchTerm.toLowerCase());
+    
+    if (!matchesSearch) return false;
+    
+    if (filterType === "free") return user.planType === "free";
+    if (filterType === "paid") return user.planType === "paid";
+    if (filterType === "active") return user.accountStatus === "active";
+    
+    return true;
+  });
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      transition={{ duration: 0.3 }}
+    >
+      <div style={styles.tableHeader}>
+        <h2>All Users ({users.length})</h2>
         <div style={styles.tableActions}>
+          <select
+            value={filterType}
+            onChange={(e) => setFilterType(e.target.value)}
+            style={styles.filterSelect}
+          >
+            <option value="all">All Users</option>
+            <option value="free">Free Users</option>
+            <option value="paid">Paid Users</option>
+            <option value="active">Active Only</option>
+          </select>
           <input
             type="text"
-            placeholder="Search by name or location..."
+            placeholder="Search users..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
             style={styles.searchInput}
@@ -411,30 +680,42 @@ function FreeUsersTab({ users, onDelete, onExport }) {
           <thead>
             <tr>
               <th>Name</th>
+              <th>Email</th>
+              <th>Plan</th>
               <th>Location</th>
-              <th>Farm Size</th>
-              <th>Crops</th>
+              <th>Status</th>
               <th>Joined</th>
+              <th>Last Active</th>
               <th>Actions</th>
             </tr>
           </thead>
           <tbody>
             {filteredUsers.map(user => (
               <tr key={user.id}>
-                <td><strong>{user.name}</strong></td>
-                <td>{user.location?.island}, {user.location?.settlement}</td>
-                <td>{user.farmSize}</td>
-                <td>{user.crops?.length || 0} crops</td>
+                <td><strong>{user.name || "No name"}</strong></td>
+                <td>{user.email || "N/A"}</td>
+                <td>
+                  <span style={{
+                    ...styles.planBadge,
+                    backgroundColor: user.planType === "paid" ? "#5A9F6E" : "#7FB34D"
+                  }}>
+                    {user.planType || "unknown"}
+                  </span>
+                </td>
+                <td>{user.location?.island || "Unknown"}</td>
+                <td>
+                  <span style={{
+                    ...styles.statusBadge,
+                    backgroundColor: user.accountStatus === "active" ? "#7FB34D" : "#999"
+                  }}>
+                    {user.accountStatus || "pending"}
+                  </span>
+                </td>
                 <td>{user.createdAt}</td>
+                <td>{user.lastActive || "Never"}</td>
                 <td>
                   <button
-                    onClick={() => setSelectedUser(user)}
-                    style={styles.viewButton}
-                  >
-                    View
-                  </button>
-                  <button
-                    onClick={() => onDelete(user.id, false)}
+                    onClick={() => onDelete(user.id)}
                     style={styles.deleteButton}
                   >
                     Delete
@@ -445,20 +726,12 @@ function FreeUsersTab({ users, onDelete, onExport }) {
           </tbody>
         </table>
       </div>
-
-      {/* User Detail Modal */}
-      {selectedUser && (
-        <UserDetailModal 
-          user={selectedUser} 
-          onClose={() => setSelectedUser(null)}
-        />
-      )}
     </motion.div>
   );
 }
 
-// Paid Users Tab
-function PaidUsersTab({ users, onStatusUpdate, onDelete, onExport }) {
+// Consultations Tab
+function ConsultationsTab({ users, onStatusUpdate, onDelete, onExport }) {
   const [searchTerm, setSearchTerm] = useState("");
 
   const filteredUsers = users.filter(user => 
@@ -474,7 +747,7 @@ function PaidUsersTab({ users, onStatusUpdate, onDelete, onExport }) {
       transition={{ duration: 0.3 }}
     >
       <div style={styles.tableHeader}>
-        <h2>Paid Users - WhatsApp Consultations ({users.length})</h2>
+        <h2>Paid Consultations ({users.length})</h2>
         <div style={styles.tableActions}>
           <input
             type="text"
@@ -494,11 +767,11 @@ function PaidUsersTab({ users, onStatusUpdate, onDelete, onExport }) {
           <thead>
             <tr>
               <th>Name</th>
-              <th>Phone</th>
+              <th>WhatsApp</th>
               <th>Location</th>
               <th>Current Issue</th>
               <th>Status</th>
-              <th>Joined</th>
+              <th>Requested</th>
               <th>Actions</th>
             </tr>
           </thead>
@@ -507,17 +780,20 @@ function PaidUsersTab({ users, onStatusUpdate, onDelete, onExport }) {
               <tr key={user.id}>
                 <td><strong>{user.name}</strong></td>
                 <td>
-                  <a href={`https://wa.me/${user.phone}`} style={styles.phoneLink}>
+                  <a href={`https://wa.me/${user.phone}`} style={styles.phoneLink} target="_blank" rel="noopener noreferrer">
                     {user.phone}
                   </a>
                 </td>
-                <td>{user.island}, {user.settlement}</td>
+                <td>{user.location?.island}, {user.location?.settlement}</td>
                 <td style={styles.issueCell}>{user.currentIssue || "N/A"}</td>
                 <td>
                   <select
-                    value={user.status || "pending"}
+                    value={user.consultationStatus || "pending"}
                     onChange={(e) => onStatusUpdate(user.id, e.target.value)}
-                    style={styles.statusSelect}
+                    style={{
+                      ...styles.statusSelect,
+                      color: user.consultationStatus === "pending" ? "#E6A93C" : "#7FB34D"
+                    }}
                   >
                     <option value="pending">Pending</option>
                     <option value="contacted">Contacted</option>
@@ -528,7 +804,7 @@ function PaidUsersTab({ users, onStatusUpdate, onDelete, onExport }) {
                 <td>{user.createdAt}</td>
                 <td>
                   <button
-                    onClick={() => onDelete(user.id, true)}
+                    onClick={() => onDelete(user.id)}
                     style={styles.deleteButton}
                   >
                     Delete
@@ -543,8 +819,17 @@ function PaidUsersTab({ users, onStatusUpdate, onDelete, onExport }) {
   );
 }
 
-// Messages Tab
-function MessagesTab({ messages, onDelete }) {
+// Activities Tab
+function ActivitiesTab({ activities }) {
+  const [filterType, setFilterType] = useState("all");
+
+  const filteredActivities = activities.filter(activity => {
+    if (filterType === "all") return true;
+    return activity.type === filterType;
+  });
+
+  const activityTypes = [...new Set(activities.map(a => a.type))];
+
   return (
     <motion.div
       initial={{ opacity: 0 }}
@@ -552,147 +837,84 @@ function MessagesTab({ messages, onDelete }) {
       exit={{ opacity: 0 }}
       transition={{ duration: 0.3 }}
     >
-      <h2>Contact Messages ({messages.length})</h2>
+      <div style={styles.tableHeader}>
+        <h2>System Activities ({activities.length})</h2>
+        <select
+          value={filterType}
+          onChange={(e) => setFilterType(e.target.value)}
+          style={styles.filterSelect}
+        >
+          <option value="all">All Activities</option>
+          {activityTypes.map(type => (
+            <option key={type} value={type}>{type}</option>
+          ))}
+        </select>
+      </div>
 
-      <div style={styles.messagesGrid}>
-        {messages.length === 0 ? (
-          <p style={styles.emptyState}>No messages yet</p>
-        ) : (
-          messages.map((message, index) => (
-            <motion.div
-              key={message.id}
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              transition={{ duration: 0.5, delay: index * 0.05 }}
-              style={styles.messageCard}
-            >
-              <div style={styles.messageHeader}>
-                <div>
-                  <strong>{message.name}</strong>
-                  <div style={styles.messageEmail}>{message.email}</div>
+      <div style={styles.activitiesList}>
+        {filteredActivities.map((activity, index) => (
+          <motion.div
+            key={activity.id}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ delay: index * 0.02 }}
+            style={styles.activityCard}
+          >
+            <div style={styles.activityCardHeader}>
+              <span style={styles.activityCardIcon}>{activity.icon || "📌"}</span>
+              <div style={styles.activityCardContent}>
+                <strong>{activity.title}</strong>
+                <p style={styles.activityCardMessage}>{activity.message}</p>
+                <div style={styles.activityCardMeta}>
+                  <span style={styles.activityTypeBadge}>{activity.type}</span>
+                  <span>{activity.createdAt}</span>
+                  {activity.userId && <span>User ID: {activity.userId.substring(0, 8)}...</span>}
                 </div>
-                <button
-                  onClick={() => onDelete(message.id)}
-                  style={styles.deleteButton}
-                >
-                  Delete
-                </button>
               </div>
-              <p style={styles.messageText}>{message.message}</p>
-            </motion.div>
-          ))
-        )}
+            </div>
+          </motion.div>
+        ))}
       </div>
     </motion.div>
   );
 }
 
-// User Detail Modal
-function UserDetailModal({ user, onClose }) {
-  return (
-    <div style={styles.modalOverlay} onClick={onClose}>
-      <motion.div
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        transition={{ duration: 0.3 }}
-        onClick={(e) => e.stopPropagation()}
-        style={styles.modal}
-      >
-        <div style={styles.modalHeader}>
-          <h2>User Details: {user.name}</h2>
-          <button onClick={onClose} style={styles.closeButton}>×</button>
-        </div>
-
-        <div style={styles.modalContent}>
-          <DetailRow label="Location" value={`${user.location?.island}, ${user.location?.settlement}`} />
-          <DetailRow label="Farm Size" value={user.farmSize} />
-          <DetailRow label="Terrain" value={user.terrain} />
-          <DetailRow label="Farming Type" value={user.farmingType} />
-          
-          <div style={styles.detailSection}>
-            <strong>Growing Sites:</strong>
-            <p>{user.growingSites?.join(", ") || "N/A"}</p>
-          </div>
-
-          <div style={styles.detailSection}>
-            <strong>Water Sources:</strong>
-            <p>{user.waterSources?.join(", ") || "N/A"}</p>
-          </div>
-
-          <div style={styles.detailSection}>
-            <strong>Crops ({user.crops?.length || 0}):</strong>
-            <div style={styles.tagContainer}>
-              {user.crops?.map((crop, i) => (
-                <span key={i} style={styles.cropTag}>{crop}</span>
-              ))}
-            </div>
-          </div>
-
-          <div style={styles.detailSection}>
-            <strong>Pest Control Methods:</strong>
-            <p>{user.pestControl?.join(", ") || "N/A"}</p>
-          </div>
-
-          <div style={styles.detailSection}>
-            <strong>Disease History ({user.diseases?.length || 0}):</strong>
-            {user.diseases?.length > 0 ? (
-              user.diseases.map((disease, i) => (
-                <div key={i} style={styles.diseaseItem}>
-                  <span>{disease.name}</span>
-                  <span style={{
-                    ...styles.severityBadge,
-                    backgroundColor: 
-                      disease.severity === "High" ? "#ef4444" :
-                      disease.severity === "Medium" ? "#f59e0b" : "#10b981"
-                  }}>
-                    {disease.severity}
-                  </span>
-                </div>
-              ))
-            ) : (
-              <p>No disease history recorded</p>
-            )}
-          </div>
-
-          <DetailRow label="Crop Diversity Notes" value={user.cropDiversity || "N/A"} />
-          <DetailRow label="Joined" value={user.createdAt} />
-        </div>
-      </motion.div>
-    </div>
-  );
-}
-
-function DetailRow({ label, value }) {
-  return (
-    <div style={styles.detailRow}>
-      <strong>{label}:</strong>
-      <span>{value}</span>
-    </div>
-  );
+// Helper function
+function getActivityIcon(type) {
+  const icons = {
+    weather_alert: "🌦️",
+    crop_plan: "🌱",
+    reminder: "⏰",
+    notification: "🔔",
+    admin_notification: "📧",
+    contact_message: "✉️",
+    consultation: "💬"
+  };
+  return icons[type] || "📌";
 }
 
 // Styles
 const styles = {
-  // Login Styles
   loginContainer: {
     minHeight: "100vh",
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
-    background: "var(--paper-cream)"
+    background: "linear-gradient(135deg, #F7F3EA 0%, #E8F5E9 100%)"
   },
   loginBox: {
     background: "white",
     padding: "3rem",
     borderRadius: "16px",
-    boxShadow: "0 8px 16px rgba(0,0,0,0.1)",
+    boxShadow: "0 8px 24px rgba(0,0,0,0.12)",
     width: "100%",
     maxWidth: "400px",
     textAlign: "center"
   },
   loginSubtitle: {
     color: "#666",
-    marginBottom: "2rem"
+    marginBottom: "2rem",
+    fontSize: "0.9rem"
   },
   passwordInput: {
     width: "100%",
@@ -714,8 +936,6 @@ const styles = {
     fontWeight: "600",
     cursor: "pointer"
   },
-
-  // Main Panel Styles
   adminPanel: {
     minHeight: "100vh",
     background: "var(--paper-cream)",
@@ -726,7 +946,8 @@ const styles = {
     display: "flex",
     flexDirection: "column",
     alignItems: "center",
-    justifyContent: "center"
+    justifyContent: "center",
+    background: "var(--paper-cream)"
   },
   spinner: {
     width: "50px",
@@ -742,11 +963,26 @@ const styles = {
     justifyContent: "space-between",
     alignItems: "center",
     marginBottom: "2rem",
-    flexWrap: "wrap"
+    flexWrap: "wrap",
+    gap: "1rem"
   },
   headerSubtitle: {
     color: "#666",
-    marginTop: "0.5rem"
+    marginTop: "0.5rem",
+    fontSize: "0.95rem"
+  },
+  headerActions: {
+    display: "flex",
+    gap: "1rem"
+  },
+  refreshButton: {
+    padding: "0.75rem 1.5rem",
+    background: "var(--soil-green)",
+    color: "white",
+    border: "none",
+    borderRadius: "8px",
+    cursor: "pointer",
+    fontWeight: "600"
   },
   logoutButton: {
     padding: "0.75rem 1.5rem",
@@ -767,7 +1003,7 @@ const styles = {
     background: "white",
     padding: "1.5rem",
     borderRadius: "12px",
-    boxShadow: "0 2px 4px rgba(0,0,0,0.1)",
+    boxShadow: "0 2px 8px rgba(0,0,0,0.08)",
     display: "flex",
     alignItems: "center",
     gap: "1rem"
@@ -782,11 +1018,17 @@ const styles = {
   },
   statLabel: {
     color: "#666",
-    fontSize: "0.9rem"
+    fontSize: "0.9rem",
+    marginTop: "0.25rem"
+  },
+  statSubtitle: {
+    color: "#999",
+    fontSize: "0.75rem",
+    marginTop: "0.25rem"
   },
   tabs: {
     display: "flex",
-    gap: "1rem",
+    gap: "0.5rem",
     marginBottom: "2rem",
     borderBottom: "2px solid #e0e0e0",
     flexWrap: "wrap"
@@ -800,21 +1042,64 @@ const styles = {
     fontSize: "1rem",
     fontWeight: "500",
     color: "#666",
-    transition: "all 0.2s"
+    transition: "all 0.2s",
+    display: "flex",
+    alignItems: "center",
+    gap: "0.5rem"
   },
   tabActive: {
     color: "var(--soil-green)",
     borderBottom: "3px solid var(--soil-green)"
   },
+  tabBadge: {
+    background: "#ef4444",
+    color: "white",
+    padding: "0.2rem 0.5rem",
+    borderRadius: "10px",
+    fontSize: "0.75rem",
+    fontWeight: "bold"
+  },
   content: {
     background: "white",
     padding: "2rem",
     borderRadius: "12px",
-    boxShadow: "0 2px 4px rgba(0,0,0,0.1)",
+    boxShadow: "0 2px 8px rgba(0,0,0,0.08)",
     minHeight: "400px"
   },
-  
-  // Overview Styles
+  urgentSection: {
+    background: "#FFF3CD",
+    border: "2px solid #FFC107",
+    borderRadius: "12px",
+    padding: "1.5rem",
+    marginBottom: "2rem"
+  },
+  urgentTitle: {
+    color: "#856404",
+    marginBottom: "1rem"
+  },
+  urgentItem: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    padding: "1rem",
+    background: "white",
+    borderRadius: "8px",
+    marginBottom: "0.5rem"
+  },
+  urgentMessage: {
+    color: "#666",
+    fontSize: "0.9rem",
+    marginTop: "0.5rem"
+  },
+  urgentButton: {
+    padding: "0.5rem 1rem",
+    background: "#E6A93C",
+    color: "white",
+    border: "none",
+    borderRadius: "6px",
+    cursor: "pointer",
+    fontWeight: "600"
+  },
   overviewGrid: {
     display: "grid",
     gridTemplateColumns: "repeat(auto-fit, minmax(400px, 1fr))",
@@ -833,31 +1118,156 @@ const styles = {
     borderBottom: "1px solid #e0e0e0",
     alignItems: "center"
   },
-  overviewDate: {
+  overviewMeta: {
     color: "#666",
-    fontSize: "0.85rem"
+    fontSize: "0.85rem",
+    marginTop: "0.25rem"
   },
-  phoneNumber: {
-    color: "var(--soil-green)",
-    fontSize: "0.9rem",
+  activityItem: {
+    display: "flex",
+    alignItems: "center",
+    gap: "1rem",
+    padding: "0.75rem",
+    borderBottom: "1px solid #e0e0e0"
+  },
+  activityIcon: {
+    fontSize: "1.5rem"
+  },
+  activityContent: {
+    flex: 1
+  },
+  activityMeta: {
+    color: "#999",
+    fontSize: "0.8rem",
     marginTop: "0.25rem"
   },
   statusBadge: {
     padding: "0.25rem 0.75rem",
     borderRadius: "12px",
     color: "white",
-    fontSize: "0.8rem",
+    fontSize: "0.75rem",
+    fontWeight: "600",
+    textTransform: "uppercase"
+  },
+  planBadge: {
+    padding: "0.25rem 0.75rem",
+    borderRadius: "12px",
+    color: "white",
+    fontSize: "0.75rem",
     fontWeight: "600",
     textTransform: "uppercase"
   },
   emptyState: {
     textAlign: "center",
     color: "#999",
-    padding: "2rem",
+    padding: "3rem",
     fontStyle: "italic"
   },
-
-  // Table Styles
+  notificationsContainer: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "1rem",
+    marginTop: "1.5rem"
+  },
+  notificationCard: {
+    background: "#f9f9f9",
+    padding: "1.5rem",
+    borderRadius: "12px",
+    border: "2px solid #e0e0e0"
+  },
+  notificationUnread: {
+    background: "#FFF9E6",
+    border: "2px solid #FFE082"
+  },
+  notificationHigh: {
+    border: "2px solid #ef4444",
+    background: "#FFF5F5"
+  },
+  notificationHeader: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    marginBottom: "1rem"
+  },
+  notificationTitle: {
+    display: "flex",
+    alignItems: "center",
+    gap: "0.75rem",
+    flex: 1
+  },
+  notificationIcon: {
+    fontSize: "1.5rem"
+  },
+  priorityBadge: {
+    background: "#ef4444",
+    color: "white",
+    padding: "0.2rem 0.6rem",
+    borderRadius: "12px",
+    fontSize: "0.7rem",
+    fontWeight: "bold"
+  },
+  unreadDot: {
+    width: "8px",
+    height: "8px",
+    background: "#E6A93C",
+    borderRadius: "50%",
+    display: "inline-block"
+  },
+  notificationActions: {
+    display: "flex",
+    gap: "0.5rem"
+  },
+  markReadButton: {
+    padding: "0.5rem 1rem",
+    background: "var(--soil-green)",
+    color: "white",
+    border: "none",
+    borderRadius: "6px",
+    cursor: "pointer",
+    fontSize: "0.85rem",
+    fontWeight: "600"
+  },
+  deleteIconButton: {
+    width: "32px",
+    height: "32px",
+    background: "#ef4444",
+    color: "white",
+    border: "none",
+    borderRadius: "6px",
+    cursor: "pointer",
+    fontSize: "1.5rem",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center"
+  },
+  notificationMessage: {
+    color: "#333",
+    lineHeight: "1.6",
+    marginBottom: "1rem"
+  },
+  notificationDetails: {
+    background: "white",
+    padding: "1rem",
+    borderRadius: "8px",
+    fontSize: "0.9rem",
+    lineHeight: "1.8",
+    marginBottom: "1rem"
+  },
+  notificationFooter: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center"
+  },
+  notificationDate: {
+    color: "#999",
+    fontSize: "0.85rem"
+  },
+  actionLink: {
+    color: "var(--soil-green)",
+    textDecoration: "none",
+    fontWeight: "600",
+    fontSize: "0.9rem"
+  },
   tableHeader: {
     display: "flex",
     justifyContent: "space-between",
@@ -870,6 +1280,29 @@ const styles = {
     display: "flex",
     gap: "1rem",
     flexWrap: "wrap"
+  },
+  filterButtons: {
+    display: "flex",
+    gap: "0.5rem"
+  },
+  filterButton: {
+    padding: "0.5rem 1rem",
+    background: "#f0f0f0",
+    border: "none",
+    borderRadius: "6px",
+    cursor: "pointer",
+    fontSize: "0.9rem"
+  },
+  filterActive: {
+    background: "var(--soil-green)",
+    color: "white"
+  },
+  filterSelect: {
+    padding: "0.75rem",
+    border: "1px solid #ddd",
+    borderRadius: "8px",
+    fontSize: "0.9rem",
+    cursor: "pointer"
   },
   searchInput: {
     padding: "0.75rem",
@@ -885,8 +1318,7 @@ const styles = {
     border: "none",
     borderRadius: "8px",
     cursor: "pointer",
-    fontWeight: "600",
-    whiteSpace: "nowrap"
+    fontWeight: "600"
   },
   tableContainer: {
     overflowX: "auto"
@@ -895,16 +1327,6 @@ const styles = {
     width: "100%",
     borderCollapse: "collapse",
     fontSize: "0.9rem"
-  },
-  viewButton: {
-    padding: "0.5rem 1rem",
-    background: "var(--soil-green)",
-    color: "white",
-    border: "none",
-    borderRadius: "6px",
-    cursor: "pointer",
-    marginRight: "0.5rem",
-    fontSize: "0.85rem"
   },
   deleteButton: {
     padding: "0.5rem 1rem",
@@ -918,7 +1340,7 @@ const styles = {
   phoneLink: {
     color: "var(--soil-green)",
     textDecoration: "none",
-    fontWeight: "500"
+    fontWeight: "600"
   },
   issueCell: {
     maxWidth: "200px",
@@ -931,121 +1353,59 @@ const styles = {
     border: "1px solid #ddd",
     borderRadius: "6px",
     fontSize: "0.85rem",
-    cursor: "pointer"
+    cursor: "pointer",
+    fontWeight: "600"
   },
-
-  // Messages Styles
-  messagesGrid: {
-    display: "grid",
-    gap: "1rem",
+  activitiesList: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "0.75rem",
     marginTop: "1.5rem"
   },
-  messageCard: {
+  activityCard: {
     background: "#f9f9f9",
-    padding: "1.5rem",
+    padding: "1rem",
     borderRadius: "8px",
     border: "1px solid #e0e0e0"
   },
-  messageHeader: {
+  activityCardHeader: {
     display: "flex",
-    justifyContent: "space-between",
-    marginBottom: "1rem",
-    alignItems: "flex-start"
+    gap: "1rem"
   },
-  messageEmail: {
+  activityCardIcon: {
+    fontSize: "1.5rem"
+  },
+  activityCardContent: {
+    flex: 1
+  },
+  activityCardMessage: {
     color: "#666",
     fontSize: "0.9rem",
-    marginTop: "0.25rem"
+    marginTop: "0.5rem",
+    marginBottom: "0.75rem"
   },
-  messageText: {
-    lineHeight: "1.6",
-    color: "#333"
-  },
-
-  // Modal Styles
-  modalOverlay: {
-    position: "fixed",
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    background: "rgba(0,0,0,0.5)",
+  activityCardMeta: {
     display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    zIndex: 1000,
-    padding: "1rem"
+    gap: "1rem",
+    fontSize: "0.8rem",
+    color: "#999"
   },
-  modal: {
-    background: "white",
-    borderRadius: "16px",
-    maxWidth: "800px",
-    width: "100%",
-    maxHeight: "90vh",
-    overflow: "auto"
-  },
-  modalHeader: {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center",
-    padding: "1.5rem",
-    borderBottom: "1px solid #e0e0e0"
-  },
-  closeButton: {
-    background: "none",
-    border: "none",
-    fontSize: "2rem",
-    cursor: "pointer",
-    color: "#666"
-  },
-  modalContent: {
-    padding: "1.5rem"
-  },
-  detailRow: {
-    display: "flex",
-    justifyContent: "space-between",
-    padding: "0.75rem",
-    borderBottom: "1px solid #f0f0f0"
-  },
-  detailSection: {
-    marginTop: "1.5rem",
-    padding: "1rem",
-    background: "#f9f9f9",
-    borderRadius: "8px"
-  },
-  tagContainer: {
-    display: "flex",
-    flexWrap: "wrap",
-    gap: "0.5rem",
-    marginTop: "0.5rem"
-  },
-  cropTag: {
-    background: "var(--soil-green)",
-    color: "white",
-    padding: "0.25rem 0.75rem",
-    borderRadius: "12px",
-    fontSize: "0.85rem"
-  },
-  diseaseItem: {
-    display: "flex",
-    justifyContent: "space-between",
-    padding: "0.5rem",
-    background: "white",
-    borderRadius: "6px",
-    marginTop: "0.5rem"
-  },
-  severityBadge: {
+  activityTypeBadge: {
+    background: "#e0e0e0",
     padding: "0.2rem 0.6rem",
-    borderRadius: "12px",
-    fontSize: "0.75rem",
-    color: "white",
-    fontWeight: "bold"
+    borderRadius: "10px",
+    fontSize: "0.75rem"
   }
 };
 
-// Add this to your index.css if not already there
+// Add styles
 const styleSheet = document.createElement("style");
 styleSheet.textContent = `
+  @keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+  }
+  
   table th {
     background: var(--soil-green);
     color: white;
@@ -1063,5 +1423,4 @@ styleSheet.textContent = `
     background: #f9f9f9;
   }
 `;
-
 document.head.appendChild(styleSheet);

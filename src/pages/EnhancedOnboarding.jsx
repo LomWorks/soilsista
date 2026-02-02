@@ -1,3 +1,4 @@
+//FIXES: Include the mic orb under every description option.
 import React, { useState } from "react";
 import { db } from "../firebase";
 import { addDoc, collection } from "firebase/firestore";
@@ -190,6 +191,7 @@ export default function EnhancedOnboarding() {
     );
   }
 
+  // Include the voice to text here. 
   // PAID VERSION - Quick 60-second Form
   if (planType === "paid") {
     return (

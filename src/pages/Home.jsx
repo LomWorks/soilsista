@@ -87,9 +87,9 @@ export default function Home() {
         style={styles.social}
       >
         <p style={styles.socialText}>
-          "Soil Sista helped me increase my harvest by 40% using climate data and smart planning"
+          "Working with Jade Sands was truly a pleasure. We had a strict deadline to provide several deliverables and Jade met each requirement for the various timeline. Jade is very insightful, a critical thinker and analytical. She will provide great assistance to any work."
         </p>
-        <p style={styles.socialAuthor}>— Maria R., Antigua</p>
+        <p style={styles.socialAuthor}>Jeri Kelly Russell, CEO Island Manna Farm Store, Freeport</p>
       </motion.div>
     </div>
   );

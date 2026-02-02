@@ -6,6 +6,7 @@ import Onboarding from "./pages/Onboarding";
 import EnhancedOnboarding from "./pages/EnhancedOnboarding";
 import Dashboard from "./pages/Dashboard";
 import AdminPanel from "./pages/Adminpanel";
+import WeatherWidget from "./components/WeatherWidget";
 import Navbar from "./components/Navbar";
 import "./index.css";
 
@@ -20,6 +21,7 @@ function App() {
         <Route path="/onboarding" element={<Onboarding />} />
         <Route path="/get-started" element={<EnhancedOnboarding />} />
         <Route path="/dashboard" element={<Dashboard />} />
+        <Route path="/weather" element={<WeatherWidget />} />
         <Route path="/admin" element={<AdminPanel />} />
       </Routes>
     </Router>

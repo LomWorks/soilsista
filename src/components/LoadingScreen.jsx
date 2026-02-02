@@ -125,12 +125,12 @@ function WateringPlant() {
         transition={{ duration: 2, times: [0, 0.5, 1] }}
       >
         {/* Can Body */}
-        <rect x="0" y="0" width="30" height="25" rx="4" fill="var(--soft-pink)" stroke="var(--ink-black)" strokeWidth="1.5"/>
+        <rect x="0" y="0" width="30" height="25" rx="4" fill="var(--deep-leaf)" stroke="var(--ink-black)" strokeWidth="1.5"/>
         
         {/* Spout */}
         <path
           d="M 30 10 Q 40 10, 45 5"
-          stroke="var(--soft-pink)"
+          stroke="var(--deep-leaf)"
           strokeWidth="3"
           fill="none"
           strokeLinecap="round"
@@ -145,7 +145,7 @@ function WateringPlant() {
         />
       </motion.g>
       
-      {/* Water Drops */}
+      {/* Water Drops - MUCH MORE SUBTLE */}
       <WaterDrops />
     </svg>
   );
@@ -167,12 +167,12 @@ function WaterDrops() {
           key={i}
           cx={drop.x}
           cy="30"
-          r="2"
+          r="1.5" // Smaller drops
           fill="#6CB4EE"
-          initial={{ y: 0, opacity: 1 }}
+          initial={{ y: 0, opacity: 0.3 }} // Start more transparent
           animate={{ 
             y: [0, 110],
-            opacity: [1, 1, 0]
+            opacity: [0.3, 0.4, 0] // More subtle opacity range
           }}
           transition={{
             delay: drop.delay,

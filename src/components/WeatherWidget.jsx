@@ -4,9 +4,10 @@ import { motion } from "framer-motion";
 export default function WeatherWidget({ location }) {
   const [weather, setWeather] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [island, setIsland] = useState(); 
 
   useEffect(() => {
-    // Mock weather data - in production, integrate with IICA API
+    // Mock weather data - in production, integrate with an actual api that can utilize bahamian weather data.
     const mockWeatherData = {
       current: {
         temp: 28,
@@ -50,9 +51,6 @@ export default function WeatherWidget({ location }) {
     return (
       <div style={styles.error}>
         <p>Unable to load weather data</p>
-        <p style={styles.errorSub}>
-          Connect with IICA weather API in production for real-time data
-        </p>
       </div>
     );
   }

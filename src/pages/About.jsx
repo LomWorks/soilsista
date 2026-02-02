@@ -105,7 +105,7 @@ export default function About() {
         transition={{ duration: 0.5, delay: 0.4 }}
         style={styles.section}
       >
-        <h2>Bahamian Farming Methods We Support</h2>
+        <h2>Farming Methods We Support</h2>
         <div style={styles.farmingTypes}>
           <div style={styles.farmingType}>
             <h4>🏡 Backyard Farming</h4>

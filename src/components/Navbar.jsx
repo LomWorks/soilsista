@@ -1,16 +1,18 @@
+// I need the links to be viewable once pressed. 
 import { Link } from "react-router-dom";
-
+import '../components/logo192.png'
 export default function Navbar() {
   return (
     <nav style={styles.nav}>
-      <Link to="/" style={styles.logo}>
-        <h2>🌱 Soil Sista</h2>
+      <Link to="/">
+     
+           <img src="logo192.png" className="logo"/>
+    
       </Link>
       <div style={styles.links}>
         <Link to="/">Home</Link>
         <Link to="/about">About</Link>
         <Link to="/get-started">Get Started</Link>
-        <Link to="/contact">Contact</Link>
       </div>
     </nav>
   );
@@ -27,8 +29,8 @@ const styles = {
     flexWrap: "wrap"
   },
   logo: {
-    textDecoration: "none",
-    color: "white"
+    height: "auto", 
+    width: "0.2 rem"
   },
   links: { 
     display: "flex", 
