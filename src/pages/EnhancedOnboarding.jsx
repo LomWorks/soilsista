@@ -5,7 +5,7 @@ import { createUserWithEmailAndPassword } from "firebase/auth";
 import { motion, AnimatePresence } from "framer-motion";
 import LoadingScreen from "../components/LoadingScreen";
 import VoiceInput from "../components/VoiceInput";
-
+import CARIBBEAN_ISLANDS from "../utils/caribbeanIslands";
 export default function EnhancedOnboarding() {
   const [step, setStep] = useState(0);
   const [planType, setPlanType] = useState(null); // 'free' or 'paid'
@@ -253,9 +253,10 @@ function PaidForm({ email, setEmail, password, setPassword, data, setData, submi
         <label style={styles.label}>Island</label>
            <select value={data.island} onChange={e => setData({ ...data, island: e.target.value })} style={styles.input}>
              <option value="">Select island</option>
-             {caribbeanIslands.map(island => (
-               <option key={island} value={island}>{island}</option>
-             ))}
+             {CARIBBEAN_ISLANDS.map(island => (
+  <option key={island} value={island}>{island}</option>
+))}
+
              </select>
 
         <label style={styles.label}>Settlement/Area</label>
@@ -637,3 +638,114 @@ const styles = {
     marginTop: "1rem"
   }
 };
+
+function AccountSetup({ email, setEmail, password, setPassword }) {
+  return (
+    <div style={styles.stepContent}>
+      <label style={styles.label}>Email</label>
+      <input
+        type="email"
+        value={email}
+        onChange={e => setEmail(e.target.value)}
+        style={styles.input}
+      />
+
+      <label style={styles.label}>Password</label>
+      <input
+        type="password"
+        value={password}
+        onChange={e => setPassword(e.target.value)}
+        style={styles.input}
+      />
+    </div>
+  );
+}
+
+function BasicInfo({ data, setData }) {
+  return (
+    <div style={styles.stepContent}>
+      <label style={styles.label}>Your Name</label>
+      <input
+        value={data.name}
+        onChange={e => setData({ ...data, name: e.target.value })}
+        style={styles.input}
+      />
+    </div>
+  );
+}
+
+function FarmSize({ data, setData }) {
+  return (
+    <div style={styles.stepContent}>
+      <label style={styles.label}>Farm Size</label>
+      <input
+        placeholder="e.g. 2 acres"
+        value={data.farmSize}
+        onChange={e => setData({ ...data, farmSize: e.target.value })}
+        style={styles.input}
+      />
+    </div>
+  );
+}
+
+function FarmingType({ data, setData }) {
+  return (
+    <div style={styles.stepContent}>
+      <label style={styles.label}>Farming Type</label>
+      <input
+        placeholder="Crop / Mixed / Livestock"
+        value={data.farmingType}
+        onChange={e => setData({ ...data, farmingType: e.target.value })}
+        style={styles.input}
+      />
+    </div>
+  );
+}
+
+function CropsInfo({ data, setData }) {
+  return (
+    <div style={styles.stepContent}>
+      <label style={styles.label}>Current Crops (comma separated)</label>
+      <input
+        placeholder="Tomatoes, Peppers"
+        value={data.crops.join(", ")}
+        onChange={e =>
+          setData({ ...data, crops: e.target.value.split(",").map(c => c.trim()) })
+        }
+        style={styles.input}
+      />
+    </div>
+  );
+}
+
+function PestControl({ data, setData }) {
+  return (
+    <div style={styles.stepContent}>
+      <label style={styles.label}>Pest Control Methods</label>
+      <input
+        placeholder="Neem oil, traps, none"
+        value={data.pestControl.join(", ")}
+        onChange={e =>
+          setData({ ...data, pestControl: e.target.value.split(",").map(p => p.trim()) })
+        }
+        style={styles.input}
+      />
+    </div>
+  );
+}
+
+function DiseasesInfo({ data, setData }) {
+  return (
+    <div style={styles.stepContent}>
+      <label style={styles.label}>Known Diseases</label>
+      <input
+        placeholder="Blight, rust, none"
+        value={data.diseases.join(", ")}
+        onChange={e =>
+          setData({ ...data, diseases: e.target.value.split(",").map(d => d.trim()) })
+        }
+        style={styles.input}
+      />
+    </div>
+  );
+}
