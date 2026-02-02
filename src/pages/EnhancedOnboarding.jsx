@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { db, auth } from "../firebase";
-import { doc, setDoc, addDoc, collection } from "firebase/firestore";
+import { doc, setDoc, addDoc, collection, serverTimestamp } from "firebase/firestore";
 import { createUserWithEmailAndPassword } from "firebase/auth";
 import { motion, AnimatePresence } from "framer-motion";
 import LoadingScreen from "../components/LoadingScreen";
@@ -12,8 +12,7 @@ export default function EnhancedOnboarding() {
   const [loading, setLoading] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  
-  // Free version - comprehensive data
+
   const [freeData, setFreeData] = useState({
     name: "",
     farmSize: "",
@@ -25,13 +24,9 @@ export default function EnhancedOnboarding() {
     cropDiversity: "",
     pestControl: [],
     diseases: [],
-    location: {
-      island: "",
-      settlement: ""
-    }
+    location: { island: "", settlement: "" }
   });
 
-  // Paid version - minimal data
   const [paidData, setPaidData] = useState({
     name: "",
     island: "",
@@ -40,19 +35,19 @@ export default function EnhancedOnboarding() {
     currentIssue: ""
   });
 
+  // ===== Helper: Create Firebase User =====
+  const createFirebaseUser = async () => {
+    if (!email || !password) throw new Error("Please provide email and password");
+    const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+    return userCredential.user.uid;
+  };
+
+  // ===== Submit Free Version =====
   const submitFreeVersion = async () => {
-    if (!email || !password) {
-      alert("Please provide email and password");
-      return;
-    }
-
-    setLoading(true);
     try {
-      // Create Firebase Auth user
-      const userCredential = await createUserWithEmailAndPassword(auth, email, password);
-      const userId = userCredential.user.uid;
+      setLoading(true);
+      const userId = await createFirebaseUser();
 
-      // Create user document in /users collection
       await setDoc(doc(db, "users", userId), {
         userId,
         email,
@@ -70,16 +65,11 @@ export default function EnhancedOnboarding() {
         cropDiversity: freeData.cropDiversity,
         pestControl: freeData.pestControl,
         diseases: freeData.diseases,
-        stats: {
-          cropsPlanted: 0,
-          cropsHarvested: 0,
-          lastActive: new Date()
-        },
-        createdAt: new Date(),
-        updatedAt: new Date()
+        stats: { cropsPlanted: 0, cropsHarvested: 0, lastActive: new Date() },
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp()
       });
 
-      // Create welcome notification
       await addDoc(collection(db, "activities"), {
         userId,
         type: "notification",
@@ -88,35 +78,26 @@ export default function EnhancedOnboarding() {
         message: "Your farm profile is all set up. Start planning your crops in the dashboard!",
         icon: "🎉",
         status: "unread",
-        createdAt: new Date(),
-        expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) // 7 days
+        createdAt: serverTimestamp(),
+        expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)
       });
 
-      setTimeout(() => {
-        setLoading(false);
-        alert("Welcome to Soil Sista! Your dashboard is ready.");
-        window.location.href = "/dashboard";
-      }, 2000);
+      setLoading(false);
+      alert("Welcome to Soil Sista! Your dashboard is ready.");
+      window.location.href = "/dashboard";
     } catch (err) {
-      console.error("Error:", err);
+      console.error(err);
       setLoading(false);
       alert(err.message || "Error creating account");
     }
   };
 
+  // ===== Submit Paid Version =====
   const submitPaidVersion = async () => {
-    if (!email || !password) {
-      alert("Please provide email and password");
-      return;
-    }
-
-    setLoading(true);
     try {
-      // Create Firebase Auth user
-      const userCredential = await createUserWithEmailAndPassword(auth, email, password);
-      const userId = userCredential.user.uid;
+      setLoading(true);
+      const userId = await createFirebaseUser();
 
-      // Create user document
       await setDoc(doc(db, "users", userId), {
         userId,
         email,
@@ -124,23 +105,15 @@ export default function EnhancedOnboarding() {
         planType: "paid",
         accountStatus: "active",
         onboardingComplete: true,
-        location: {
-          island: paidData.island,
-          settlement: paidData.settlement
-        },
+        location: { island: paidData.island, settlement: paidData.settlement },
         phone: paidData.phone,
         currentIssue: paidData.currentIssue,
         consultationStatus: "pending",
-        stats: {
-          cropsPlanted: 0,
-          cropsHarvested: 0,
-          lastActive: new Date()
-        },
-        createdAt: new Date(),
-        updatedAt: new Date()
+        stats: { cropsPlanted: 0, cropsHarvested: 0, lastActive: new Date() },
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp()
       });
 
-      // Create consultation request activity (triggers Cloud Function for admin notification)
       await addDoc(collection(db, "activities"), {
         userId,
         type: "consultation",
@@ -152,673 +125,170 @@ export default function EnhancedOnboarding() {
         data: {
           userName: paidData.name,
           userPhone: paidData.phone,
-          userLocation: {
-            island: paidData.island,
-            settlement: paidData.settlement
-          },
+          userLocation: { island: paidData.island, settlement: paidData.settlement },
           issue: paidData.currentIssue || "General consultation",
           consultationType: "paid"
         },
-        createdAt: new Date()
+        createdAt: serverTimestamp()
       });
 
-      setTimeout(() => {
-        setLoading(false);
-        alert("Profile created! You'll receive a WhatsApp message within 24 hours.");
-        window.location.href = "/dashboard";
-      }, 2000);
+      setLoading(false);
+      alert("Profile created! You'll receive a WhatsApp message within 24 hours.");
+      window.location.href = "/dashboard";
     } catch (err) {
-      console.error("Error:", err);
+      console.error(err);
       setLoading(false);
       alert(err.message || "Error creating account");
     }
   };
 
-  if (loading) {
-    return <LoadingScreen />;
-  }
+  if (loading) return <LoadingScreen />;
 
-  // Step 0: Choose Plan Type
-  if (planType === null) {
-    return (
-      <div style={styles.page}>
+  // ===== Step Components =====
+  const freeSteps = [
+    <AccountSetup email={email} setEmail={setEmail} password={password} setPassword={setPassword} key={0} />, 
+    <BasicInfo data={freeData} setData={setFreeData} key={1} />,
+    <FarmSize data={freeData} setData={setFreeData} key={2} />,
+    <FarmingType data={freeData} setData={setFreeData} key={3} />,
+    <CropsInfo data={freeData} setData={setFreeData} key={4} />,
+    <PestControl data={freeData} setData={setFreeData} key={5} />,
+    <DiseasesInfo data={freeData} setData={setFreeData} key={6} />
+  ];
+
+  // ===== Render =====
+  if (planType === null) return <PlanSelection setPlanType={setPlanType} />;
+
+  if (planType === "free") return (
+    <div style={styles.page}>
+      <ProgressBar current={step} total={freeSteps.length} />
+      <AnimatePresence mode="wait">
         <motion.div
+          key={step}
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
-          transition={{ duration: 0.5 }}
-          style={styles.planSelection}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.3 }}
+          style={styles.formContainer}
         >
-          <h1>Welcome to Soil Sista</h1>
-          <p style={styles.subtitle}>Choose your consultation plan</p>
-
-          <div style={styles.planCards}>
-            {/* Free Plan Card */}
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.5, delay: 0.1 }}
-              whileHover={{ scale: 1.02 }}
-              onClick={() => setPlanType("free")}
-              style={styles.planCard}
-            >
-              <h2>🌱 Free Self-Serve</h2>
-              <ul style={styles.featureList}>
-                <li>✓ Complete farm data setup</li>
-                <li>✓ Real-time climate data</li>
-                <li>✓ Automated planning tools</li>
-                <li>✓ Educational resources</li>
-                <li>✓ Weather alerts</li>
-              </ul>
-              <button style={styles.selectButton}>Get Started Free</button>
-            </motion.div>
-
-            {/* Paid Plan Card */}
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.5, delay: 0.2 }}
-              whileHover={{ scale: 1.02 }}
-              onClick={() => setPlanType("paid")}
-              style={{...styles.planCard, ...styles.paidCard}}
-            >
-              <div style={styles.badge}>PREMIUM</div>
-              <h2>💬 WhatsApp Consultation</h2>
-              <ul style={styles.featureList}>
-                <li>✓ 60-second quick setup</li>
-                <li>✓ Direct WhatsApp support</li>
-                <li>✓ Real-time expert advice</li>
-                <li>✓ Proactive weather alerts</li>
-                <li>✓ Photo-based diagnostics</li>
-              </ul>
-              <button style={{...styles.selectButton, ...styles.paidButton}}>
-                Start Premium
-              </button>
-            </motion.div>
-          </div>
+          {freeSteps[step]}
         </motion.div>
+      </AnimatePresence>
+
+      <div style={styles.navigation}>
+        {step > 0 && <button onClick={() => setStep(step - 1)} style={styles.backButton}>← Back</button>}
+        {step < freeSteps.length - 1 ? 
+          <button onClick={() => setStep(step + 1)} style={styles.nextButton}>Next →</button> :
+          <button onClick={submitFreeVersion} style={styles.submitButton}>Complete Setup</button>
+        }
       </div>
-    );
-  }
+    </div>
+  );
 
-  // FREE VERSION - Multi-step Form
-  if (planType === "free") {
-    return (
-      <div style={styles.page}>
-        <ProgressBar current={step} total={7} />
-        
-        <AnimatePresence mode="wait">
-          <motion.div
-            key={step}
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.3 }}
-            style={styles.formContainer}
-          >
-            {step === 0 && <AccountSetup email={email} setEmail={setEmail} password={password} setPassword={setPassword} />}
-            {step === 1 && <BasicInfo data={freeData} setData={setFreeData} />}
-            {step === 2 && <FarmSize data={freeData} setData={setFreeData} />}
-            {step === 3 && <FarmingType data={freeData} setData={setFreeData} />}
-            {step === 4 && <CropsInfo data={freeData} setData={setFreeData} />}
-            {step === 5 && <PestControl data={freeData} setData={setFreeData} />}
-            {step === 6 && <DiseasesInfo data={freeData} setData={setFreeData} />}
-          </motion.div>
-        </AnimatePresence>
+  if (planType === "paid") return (
+    <PaidForm
+      email={email} setEmail={setEmail}
+      password={password} setPassword={setPassword}
+      data={paidData} setData={setPaidData}
+      submit={submitPaidVersion}
+    />
+  );
 
-        <div style={styles.navigation}>
-          {step > 0 && (
-            <button onClick={() => setStep(step - 1)} style={styles.backButton}>
-              ← Back
-            </button>
-          )}
-          
-          {step < 6 ? (
-            <button onClick={() => setStep(step + 1)} style={styles.nextButton}>
-              Next →
-            </button>
-          ) : (
-            <button onClick={submitFreeVersion} style={styles.submitButton}>
-              Complete Setup
-            </button>
-          )}
-        </div>
-      </div>
-    );
-  }
-
-  // PAID VERSION - Quick 60-second Form with Voice Input
-  if (planType === "paid") {
-    return (
-      <div style={styles.page}>
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ duration: 0.5 }}
-          style={styles.quickForm}
-        >
-          <h1>Quick Setup (60 seconds)</h1>
-          <p style={styles.subtitle}>We'll gather more details through WhatsApp</p>
-
-          <label style={styles.label}>Email</label>
-          <input
-            type="email"
-            placeholder="your@email.com"
-            value={email}
-            onChange={e => setEmail(e.target.value)}
-            style={styles.input}
-          />
-
-          <label style={styles.label}>Password</label>
-          <input
-            type="password"
-            placeholder="Create a password"
-            value={password}
-            onChange={e => setPassword(e.target.value)}
-            style={styles.input}
-          />
-
-          <label style={styles.label}>Your Name</label>
-          <input
-            placeholder="Full name"
-            value={paidData.name}
-            onChange={e => setPaidData({...paidData, name: e.target.value})}
-            style={styles.input}
-          />
-
-          <label style={styles.label}>Island</label>
-          <select
-            value={paidData.island}
-            onChange={e => setPaidData({...paidData, island: e.target.value})}
-            style={styles.input}
-          >
-            <option value="">Select island</option>
-            <option value="Antigua">Antigua</option>
-            <option value="Barbuda">Barbuda</option>
-            <option value="Nassau">Nassau</option>
-            <option value="Freeport">Freeport</option>
-          </select>
-
-          <label style={styles.label}>Settlement/Area</label>
-          <input
-            placeholder="e.g., St. John's, Codrington"
-            value={paidData.settlement}
-            onChange={e => setPaidData({...paidData, settlement: e.target.value})}
-            style={styles.input}
-          />
-
-          <label style={styles.label}>WhatsApp Phone Number</label>
-          <input
-            type="tel"
-            placeholder="+1 268 XXX XXXX"
-            value={paidData.phone}
-            onChange={e => setPaidData({...paidData, phone: e.target.value})}
-            style={styles.input}
-          />
-
-          <label style={styles.label}>Current Issue (Optional)</label>
-          <textarea
-            placeholder="Brief description of what you need help with..."
-            value={paidData.currentIssue}
-            onChange={e => setPaidData({...paidData, currentIssue: e.target.value})}
-            rows={3}
-            style={styles.textarea}
-          />
-          
-          <VoiceInput 
-            setText={(text) => setPaidData({...paidData, currentIssue: text})}
-          />
-
-          <button onClick={submitPaidVersion} style={styles.submitButton}>
-            Complete Setup
-          </button>
-
-          <p style={styles.disclaimer}>
-            💬 You'll receive a WhatsApp message within 24 hours to begin your consultation
-          </p>
-        </motion.div>
-      </div>
-    );
-  }
+  return null;
 }
 
-// Progress Bar Component
+// ===== Components: Plan Selection =====
+function PlanSelection({ setPlanType }) {
+  return (
+    <div style={styles.page}>
+      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.5 }} style={styles.planSelection}>
+        <h1>Welcome to Soil Sista</h1>
+        <p style={styles.subtitle}>Choose your consultation plan</p>
+        <div style={styles.planCards}>
+          <motion.div whileHover={{ scale: 1.02 }} onClick={() => setPlanType("free")} style={styles.planCard}>
+            <h2>🌱 Free Self-Serve</h2>
+            <ul style={styles.featureList}>
+              <li>✓ Complete farm data setup</li>
+              <li>✓ Real-time climate data</li>
+              <li>✓ Automated planning tools</li>
+              <li>✓ Educational resources</li>
+              <li>✓ Weather alerts</li>
+            </ul>
+            <button style={styles.selectButton}>Get Started Free</button>
+          </motion.div>
+
+          <motion.div whileHover={{ scale: 1.02 }} onClick={() => setPlanType("paid")} style={{ ...styles.planCard, ...styles.paidCard }}>
+            <div style={styles.badge}>PREMIUM</div>
+            <h2>💬 WhatsApp Consultation</h2>
+            <ul style={styles.featureList}>
+              <li>✓ 60-second quick setup</li>
+              <li>✓ Direct WhatsApp support</li>
+              <li>✓ Real-time expert advice</li>
+              <li>✓ Proactive weather alerts</li>
+              <li>✓ Photo-based diagnostics</li>
+            </ul>
+            <button style={{ ...styles.selectButton, ...styles.paidButton }}>Start Premium</button>
+          </motion.div>
+        </div>
+      </motion.div>
+    </div>
+  );
+}
+
+// ===== Components: Paid Form =====
+function PaidForm({ email, setEmail, password, setPassword, data, setData, submit }) {
+  return (
+    <div style={styles.page}>
+      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.5 }} style={styles.quickForm}>
+        <h1>Quick Setup (60 seconds)</h1>
+        <p style={styles.subtitle}>We'll gather more details through WhatsApp</p>
+        <label style={styles.label}>Email</label>
+        <input type="email" placeholder="your@email.com" value={email} onChange={e => setEmail(e.target.value)} style={styles.input} />
+
+        <label style={styles.label}>Password</label>
+        <input type="password" placeholder="Create a password" value={password} onChange={e => setPassword(e.target.value)} style={styles.input} />
+
+        <label style={styles.label}>Your Name</label>
+        <input placeholder="Full name" value={data.name} onChange={e => setData({ ...data, name: e.target.value })} style={styles.input} />
+
+        <label style={styles.label}>Island</label>
+           <select value={data.island} onChange={e => setData({ ...data, island: e.target.value })} style={styles.input}>
+             <option value="">Select island</option>
+             {caribbeanIslands.map(island => (
+               <option key={island} value={island}>{island}</option>
+             ))}
+             </select>
+
+        <label style={styles.label}>Settlement/Area</label>
+        <input placeholder="e.g., St. John's, Codrington" value={data.settlement} onChange={e => setData({ ...data, settlement: e.target.value })} style={styles.input} />
+
+        <label style={styles.label}>WhatsApp Phone Number</label>
+        <input type="tel" placeholder="+1 242 XXX XXXX" value={data.phone} onChange={e => setData({ ...data, phone: e.target.value })} style={styles.input} />
+
+        <label style={styles.label}>Current Issue (Optional)</label>
+        <textarea placeholder="Brief description of what you need help with..." value={data.currentIssue} onChange={e => setData({ ...data, currentIssue: e.target.value })} rows={3} style={styles.textarea} />
+
+        <VoiceInput setText={(text) => setData(prev => ({ ...prev, currentIssue: prev.currentIssue + ' ' + text }))} />
+
+        <button onClick={submit} style={styles.submitButton}>Complete Setup</button>
+        <p style={styles.disclaimer}>💬 You'll receive a WhatsApp message within 24 hours to begin your consultation</p>
+      </motion.div>
+    </div>
+  );
+}
+
+// ===== Progress Bar =====
 function ProgressBar({ current, total }) {
   return (
     <div style={styles.progressContainer}>
       <div style={styles.progressBar}>
-        <motion.div
-          initial={{ width: 0 }}
-          animate={{ width: `${((current + 1) / total) * 100}%` }}
-          transition={{ duration: 0.3 }}
-          style={styles.progressFill}
-        />
+        <motion.div initial={{ width: 0 }} animate={{ width: `${((current + 1) / total) * 100}%` }} transition={{ duration: 0.3 }} style={styles.progressFill} />
       </div>
       <p style={styles.progressText}>Step {current + 1} of {total}</p>
     </div>
   );
 }
 
-// Form Step Components
-function AccountSetup({ email, setEmail, password, setPassword }) {
-  return (
-    <div style={styles.stepContent}>
-      <h2>🔐 Create Your Account</h2>
-      
-      <label style={styles.label}>Email Address</label>
-      <input
-        type="email"
-        placeholder="your@email.com"
-        value={email}
-        onChange={e => setEmail(e.target.value)}
-        style={styles.input}
-      />
-
-      <label style={styles.label}>Password</label>
-      <input
-        type="password"
-        placeholder="Choose a secure password"
-        value={password}
-        onChange={e => setPassword(e.target.value)}
-        style={styles.input}
-      />
-      
-      <p style={styles.helperText}>
-        💡 This will be used to log into your dashboard
-      </p>
-    </div>
-  );
-}
-
-function BasicInfo({ data, setData }) {
-  return (
-    <div style={styles.stepContent}>
-      <h2>👋 Let's Start with the Basics</h2>
-      
-      <label style={styles.label}>Your Name</label>
-      <input
-        placeholder="Full name"
-        value={data.name}
-        onChange={e => setData({...data, name: e.target.value})}
-        style={styles.input}
-      />
-
-      <label style={styles.label}>Location</label>
-      <div style={styles.locationGrid}>
-        <select
-          value={data.location.island}
-          onChange={e => setData({...data, location: {...data.location, island: e.target.value}})}
-          style={styles.input}
-        >
-          <option value="">Select Island</option>
-          <option value="Antigua">Antigua</option>
-          <option value="Barbuda">Barbuda</option>
-          <option value="Nassau">Nassau</option>
-          <option value="Freeport">Freeport</option>
-        </select>
-        <input
-          placeholder="Settlement/Area"
-          value={data.location.settlement}
-          onChange={e => setData({...data, location: {...data.location, settlement: e.target.value}})}
-          style={styles.input}
-        />
-      </div>
-    </div>
-  );
-}
-
-function FarmSize({ data, setData }) {
-  const terrainOptions = ["Flat Land", "Hilly", "Mixed Terrain", "Coastal", "Inland"];
-  const waterSourceOptions = ["Rain", "Well", "River/Stream", "Municipal", "Irrigation System", "Pond/Reservoir"];
-
-  const toggleItem = (array, item) => {
-    if (array.includes(item)) {
-      return array.filter(i => i !== item);
-    }
-    return [...array, item];
-  };
-
-  return (
-    <div style={styles.stepContent}>
-      <h2>🌾 Tell Us About Your Farm</h2>
-      
-      <label style={styles.label}>Farm Size (acres or sq ft)</label>
-      <input
-        placeholder="e.g., 2 acres or 5000 sq ft"
-        value={data.farmSize}
-        onChange={e => setData({...data, farmSize: e.target.value})}
-        style={styles.input}
-      />
-
-      <label style={styles.label}>Growing Sites</label>
-      <textarea
-        placeholder="Describe where you grow (e.g., backyard garden, 3 raised beds, open field)"
-        value={data.growingSites.join(", ")}
-        onChange={e => setData({...data, growingSites: e.target.value.split(",").map(s => s.trim())})}
-        rows={2}
-        style={styles.textarea}
-      />
-      
-      <VoiceInput 
-        setText={(text) => setData({...data, growingSites: text.split(",").map(s => s.trim())})}
-      />
-
-      <label style={styles.label}>Terrain Type</label>
-      <div style={styles.buttonGrid}>
-        {terrainOptions.map(option => (
-          <motion.button
-            key={option}
-            whileTap={{ scale: 0.95 }}
-            onClick={() => setData({...data, terrain: option})}
-            style={{
-              ...styles.optionButton,
-              ...(data.terrain === option ? styles.optionButtonActive : {})
-            }}
-          >
-            {option}
-          </motion.button>
-        ))}
-      </div>
-
-      <label style={styles.label}>Water Sources (select all that apply)</label>
-      <div style={styles.buttonGrid}>
-        {waterSourceOptions.map(option => (
-          <motion.button
-            key={option}
-            whileTap={{ scale: 0.95 }}
-            onClick={() => setData({...data, waterSources: toggleItem(data.waterSources, option)})}
-            style={{
-              ...styles.optionButton,
-              ...(data.waterSources.includes(option) ? styles.optionButtonActive : {})
-            }}
-          >
-            {option}
-          </motion.button>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function FarmingType({ data, setData }) {
-  return (
-    <div style={styles.stepContent}>
-      <h2>🌿 Your Farming Approach</h2>
-      
-      <label style={styles.label}>What type of farming do you practice?</label>
-      <div style={styles.cardGrid}>
-        <motion.div
-          whileHover={{ scale: 1.02 }}
-          onClick={() => setData({...data, farmingType: "Natural"})}
-          style={{
-            ...styles.selectionCard,
-            ...(data.farmingType === "Natural" ? styles.selectionCardActive : {})
-          }}
-        >
-          <div style={styles.cardEmoji}>🌱</div>
-          <h3>Natural Farming</h3>
-          <p style={styles.cardDescription}>
-            Organic methods, composting, natural pest control, no synthetic inputs
-          </p>
-        </motion.div>
-
-        <motion.div
-          whileHover={{ scale: 1.02 }}
-          onClick={() => setData({...data, farmingType: "Conventional"})}
-          style={{
-            ...styles.selectionCard,
-            ...(data.farmingType === "Conventional" ? styles.selectionCardActive : {})
-          }}
-        >
-          <div style={styles.cardEmoji}>🚜</div>
-          <h3>Conventional Farming</h3>
-          <p style={styles.cardDescription}>
-            Standard agricultural practices, may use fertilizers and pesticides
-          </p>
-        </motion.div>
-
-        <motion.div
-          whileHover={{ scale: 1.02 }}
-          onClick={() => setData({...data, farmingType: "Mixed"})}
-          style={{
-            ...styles.selectionCard,
-            ...(data.farmingType === "Mixed" ? styles.selectionCardActive : {})
-          }}
-        >
-          <div style={styles.cardEmoji}>🌾</div>
-          <h3>Mixed Approach</h3>
-          <p style={styles.cardDescription}>
-            Combination of natural and conventional methods depending on situation
-          </p>
-        </motion.div>
-      </div>
-    </div>
-  );
-}
-
-function CropsInfo({ data, setData }) {
-  const [cropInput, setCropInput] = useState("");
-
-  const addCrop = () => {
-    if (cropInput.trim()) {
-      setData({...data, crops: [...data.crops, cropInput.trim()]});
-      setCropInput("");
-    }
-  };
-
-  const removeCrop = (index) => {
-    setData({...data, crops: data.crops.filter((_, i) => i !== index)});
-  };
-
-  return (
-    <div style={styles.stepContent}>
-      <h2>🥬 What Do You Grow?</h2>
-      
-      <label style={styles.label}>Add Your Crops</label>
-      <div style={styles.addItemContainer}>
-        <input
-          placeholder="Type crop name and press Enter"
-          value={cropInput}
-          onChange={e => setCropInput(e.target.value)}
-          onKeyPress={e => e.key === 'Enter' && addCrop()}
-          style={styles.input}
-        />
-        <button onClick={addCrop} style={styles.addButton}>+ Add</button>
-      </div>
-
-      {data.crops.length > 0 && (
-        <div style={styles.tagContainer}>
-          {data.crops.map((crop, index) => (
-            <motion.div
-              key={index}
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              transition={{ duration: 0.3 }}
-              style={styles.tag}
-            >
-              {crop}
-              <span onClick={() => removeCrop(index)} style={styles.removeTag}>×</span>
-            </motion.div>
-          ))}
-        </div>
-      )}
-
-      <label style={styles.label}>Crop Diversity</label>
-      <textarea
-        placeholder="How diverse is your planting? Do you rotate crops? Any companion planting?"
-        value={data.cropDiversity}
-        onChange={e => setData({...data, cropDiversity: e.target.value})}
-        rows={3}
-        style={styles.textarea}
-      />
-      
-      <VoiceInput 
-        setText={(text) => setData({...data, cropDiversity: text})}
-      />
-    </div>
-  );
-}
-
-function PestControl({ data, setData }) {
-  const pestMethods = [
-    "🐞 Beneficial Insects",
-    "🌿 Neem Oil",
-    "🧴 Organic Sprays",
-    "🧪 Chemical Pesticides",
-    "🪤 Physical Barriers/Traps",
-    "🌱 Companion Planting",
-    "✋ Hand Picking",
-    "💨 None - Let nature handle it"
-  ];
-
-  const toggleMethod = (method) => {
-    if (data.pestControl.includes(method)) {
-      setData({...data, pestControl: data.pestControl.filter(m => m !== method)});
-    } else {
-      setData({...data, pestControl: [...data.pestControl, method]});
-    }
-  };
-
-  return (
-    <div style={styles.stepContent}>
-      <h2>🐛 Pest Control Methods</h2>
-      <p style={styles.subtitle}>Select all methods you use or are interested in trying</p>
-      
-      <div style={styles.buttonGrid}>
-        {pestMethods.map(method => (
-          <motion.button
-            key={method}
-            whileTap={{ scale: 0.95 }}
-            onClick={() => toggleMethod(method)}
-            style={{
-              ...styles.optionButton,
-              ...(data.pestControl.includes(method) ? styles.optionButtonActive : {})
-            }}
-          >
-            {method}
-          </motion.button>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function DiseasesInfo({ data, setData }) {
-  const [diseaseInput, setDiseaseInput] = useState("");
-  const [severity, setSeverity] = useState("Low");
-
-  const commonDiseases = [
-    "Powdery Mildew",
-    "Leaf Spot",
-    "Root Rot",
-    "Blight",
-    "Wilting",
-    "Fungal Infections",
-    "Bacterial Infections",
-    "Viral Diseases"
-  ];
-
-  const addDisease = (disease = diseaseInput) => {
-    if (disease.trim()) {
-      setData({
-        ...data,
-        diseases: [...data.diseases, { name: disease.trim(), severity, date: new Date().toISOString() }]
-      });
-      setDiseaseInput("");
-      setSeverity("Low");
-    }
-  };
-
-  const removeDisease = (index) => {
-    setData({...data, diseases: data.diseases.filter((_, i) => i !== index)});
-  };
-
-  return (
-    <div style={styles.stepContent}>
-      <h2>🦠 Disease History</h2>
-      <p style={styles.subtitle}>Help us understand what challenges you've faced</p>
-      
-      <label style={styles.label}>Quick Add Common Issues</label>
-      <div style={styles.buttonGrid}>
-        {commonDiseases.map(disease => (
-          <motion.button
-            key={disease}
-            whileTap={{ scale: 0.95 }}
-            onClick={() => addDisease(disease)}
-            style={styles.quickAddButton}
-          >
-            + {disease}
-          </motion.button>
-        ))}
-      </div>
-
-      <label style={styles.label}>Or Add Custom Disease/Issue</label>
-      <div style={styles.diseaseForm}>
-        <input
-          placeholder="Disease or problem name"
-          value={diseaseInput}
-          onChange={e => setDiseaseInput(e.target.value)}
-          style={{...styles.input, marginBottom: '0.5rem'}}
-        />
-        
-        <div style={styles.severitySelector}>
-          <label style={styles.smallLabel}>Severity:</label>
-          {["Low", "Medium", "High"].map(level => (
-            <button
-              key={level}
-              onClick={() => setSeverity(level)}
-              style={{
-                ...styles.severityButton,
-                ...(severity === level ? styles.severityButtonActive : {})
-              }}
-            >
-              {level}
-            </button>
-          ))}
-        </div>
-
-        <button onClick={() => addDisease()} style={styles.addButton}>
-          Add to History
-        </button>
-      </div>
-
-      {data.diseases.length > 0 && (
-        <div style={styles.diseaseList}>
-          <h3 style={styles.listTitle}>Your Disease History:</h3>
-          {data.diseases.map((disease, index) => (
-            <motion.div
-              key={index}
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              transition={{ duration: 0.3 }}
-              style={styles.diseaseItem}
-            >
-              <div>
-                <strong>{disease.name}</strong>
-                <span style={{
-                  ...styles.severityBadge,
-                  backgroundColor: 
-                    disease.severity === "High" ? "#ef4444" :
-                    disease.severity === "Medium" ? "#f59e0b" : "#10b981"
-                }}>
-                  {disease.severity}
-                </span>
-              </div>
-              <button onClick={() => removeDisease(index)} style={styles.removeButton}>
-                Remove
-              </button>
-            </motion.div>
-          ))}
-        </div>
-      )}
-
-      <p style={styles.helperText}>
-        💡 No issues yet? That's great! Skip this step or add "None" to continue.
-      </p>
-    </div>
-  );
-}
-
-// Styles
+// ===== Styles =====
 const styles = {
   page: {
     minHeight: "100vh",
