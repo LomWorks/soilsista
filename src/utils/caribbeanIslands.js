@@ -1,4 +1,4 @@
-export const CARIBBEAN_ISLANDS = [
+const CARIBBEAN_ISLANDS = [
   // Antigua & Barbuda
   "Antigua",
   "Barbuda",
@@ -35,3 +35,5 @@ export const CARIBBEAN_ISLANDS = [
   "Curacao",
   "Bonaire"
 ];
+
+export default CARIBBEAN_ISLANDS;
