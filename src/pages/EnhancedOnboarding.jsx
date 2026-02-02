@@ -1,14 +1,17 @@
-//FIXES: Include the mic orb under every description option.
 import React, { useState } from "react";
-import { db } from "../firebase";
-import { addDoc, collection } from "firebase/firestore";
+import { db, auth } from "../firebase";
+import { doc, setDoc, addDoc, collection } from "firebase/firestore";
+import { createUserWithEmailAndPassword } from "firebase/auth";
 import { motion, AnimatePresence } from "framer-motion";
 import LoadingScreen from "../components/LoadingScreen";
+import VoiceInput from "../components/VoiceInput";
 
 export default function EnhancedOnboarding() {
   const [step, setStep] = useState(0);
   const [planType, setPlanType] = useState(null); // 'free' or 'paid'
   const [loading, setLoading] = useState(false);
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   
   // Free version - comprehensive data
   const [freeData, setFreeData] = useState({
@@ -38,45 +41,136 @@ export default function EnhancedOnboarding() {
   });
 
   const submitFreeVersion = async () => {
+    if (!email || !password) {
+      alert("Please provide email and password");
+      return;
+    }
+
     setLoading(true);
     try {
-      await addDoc(collection(db, "freeUserProfiles"), {
-        ...freeData,
+      // Create Firebase Auth user
+      const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+      const userId = userCredential.user.uid;
+
+      // Create user document in /users collection
+      await setDoc(doc(db, "users", userId), {
+        userId,
+        email,
+        name: freeData.name,
         planType: "free",
-        createdAt: new Date()
+        accountStatus: "active",
+        onboardingComplete: true,
+        location: freeData.location,
+        farmSize: freeData.farmSize,
+        growingSites: freeData.growingSites,
+        terrain: freeData.terrain,
+        waterSources: freeData.waterSources,
+        farmingType: freeData.farmingType,
+        currentCrops: freeData.crops,
+        cropDiversity: freeData.cropDiversity,
+        pestControl: freeData.pestControl,
+        diseases: freeData.diseases,
+        stats: {
+          cropsPlanted: 0,
+          cropsHarvested: 0,
+          lastActive: new Date()
+        },
+        createdAt: new Date(),
+        updatedAt: new Date()
       });
-      
-      // Simulate processing time
+
+      // Create welcome notification
+      await addDoc(collection(db, "activities"), {
+        userId,
+        type: "notification",
+        category: "system",
+        title: "Welcome to Soil Sista! 🌱",
+        message: "Your farm profile is all set up. Start planning your crops in the dashboard!",
+        icon: "🎉",
+        status: "unread",
+        createdAt: new Date(),
+        expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) // 7 days
+      });
+
       setTimeout(() => {
         setLoading(false);
         alert("Welcome to Soil Sista! Your dashboard is ready.");
         window.location.href = "/dashboard";
-      }, 3000);
-    } catch (err) {
-      console.error("Error:", err);
-      setLoading(false);
-      alert("Error saving profile");
-    }
-  };
-
-  const submitPaidVersion = async () => {
-    setLoading(true);
-    try {
-      await addDoc(collection(db, "paidUserProfiles"), {
-        ...paidData,
-        planType: "paid",
-        createdAt: new Date()
-      });
-      
-      setTimeout(() => {
-        setLoading(false);
-        alert("Profile created! You'll receive a WhatsApp message shortly.");
-        window.location.href = "/";
       }, 2000);
     } catch (err) {
       console.error("Error:", err);
       setLoading(false);
-      alert("Error saving profile");
+      alert(err.message || "Error creating account");
+    }
+  };
+
+  const submitPaidVersion = async () => {
+    if (!email || !password) {
+      alert("Please provide email and password");
+      return;
+    }
+
+    setLoading(true);
+    try {
+      // Create Firebase Auth user
+      const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+      const userId = userCredential.user.uid;
+
+      // Create user document
+      await setDoc(doc(db, "users", userId), {
+        userId,
+        email,
+        name: paidData.name,
+        planType: "paid",
+        accountStatus: "active",
+        onboardingComplete: true,
+        location: {
+          island: paidData.island,
+          settlement: paidData.settlement
+        },
+        phone: paidData.phone,
+        currentIssue: paidData.currentIssue,
+        consultationStatus: "pending",
+        stats: {
+          cropsPlanted: 0,
+          cropsHarvested: 0,
+          lastActive: new Date()
+        },
+        createdAt: new Date(),
+        updatedAt: new Date()
+      });
+
+      // Create consultation request activity (triggers Cloud Function for admin notification)
+      await addDoc(collection(db, "activities"), {
+        userId,
+        type: "consultation",
+        category: "support",
+        title: "New Consultation Request",
+        message: `${paidData.name} from ${paidData.island} needs farming support.`,
+        icon: "💬",
+        status: "pending",
+        data: {
+          userName: paidData.name,
+          userPhone: paidData.phone,
+          userLocation: {
+            island: paidData.island,
+            settlement: paidData.settlement
+          },
+          issue: paidData.currentIssue || "General consultation",
+          consultationType: "paid"
+        },
+        createdAt: new Date()
+      });
+
+      setTimeout(() => {
+        setLoading(false);
+        alert("Profile created! You'll receive a WhatsApp message within 24 hours.");
+        window.location.href = "/dashboard";
+      }, 2000);
+    } catch (err) {
+      console.error("Error:", err);
+      setLoading(false);
+      alert(err.message || "Error creating account");
     }
   };
 
@@ -100,8 +194,8 @@ export default function EnhancedOnboarding() {
           <div style={styles.planCards}>
             {/* Free Plan Card */}
             <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.5, delay: 0.1 }}
               whileHover={{ scale: 1.02 }}
               onClick={() => setPlanType("free")}
@@ -109,19 +203,19 @@ export default function EnhancedOnboarding() {
             >
               <h2>🌱 Free Self-Serve</h2>
               <ul style={styles.featureList}>
-                <li>Complete farm data setup</li>
-                <li>Climate data integration</li>
-                <li>Automated planning tools</li>
-                <li>Educational resources</li>
-                <li>Self-managed consultations</li>
+                <li>✓ Complete farm data setup</li>
+                <li>✓ Real-time climate data</li>
+                <li>✓ Automated planning tools</li>
+                <li>✓ Educational resources</li>
+                <li>✓ Weather alerts</li>
               </ul>
               <button style={styles.selectButton}>Get Started Free</button>
             </motion.div>
 
             {/* Paid Plan Card */}
             <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.5, delay: 0.2 }}
               whileHover={{ scale: 1.02 }}
               onClick={() => setPlanType("paid")}
@@ -130,14 +224,14 @@ export default function EnhancedOnboarding() {
               <div style={styles.badge}>PREMIUM</div>
               <h2>💬 WhatsApp Consultation</h2>
               <ul style={styles.featureList}>
-                <li>60-second quick setup</li>
-                <li>Direct WhatsApp support</li>
-                <li>Real-time expert advice</li>
-                <li>Proactive weather alerts</li>
-                <li>Photo-based diagnostics</li>
+                <li>✓ 60-second quick setup</li>
+                <li>✓ Direct WhatsApp support</li>
+                <li>✓ Real-time expert advice</li>
+                <li>✓ Proactive weather alerts</li>
+                <li>✓ Photo-based diagnostics</li>
               </ul>
               <button style={{...styles.selectButton, ...styles.paidButton}}>
-                Start Premium Trial
+                Start Premium
               </button>
             </motion.div>
           </div>
@@ -150,7 +244,7 @@ export default function EnhancedOnboarding() {
   if (planType === "free") {
     return (
       <div style={styles.page}>
-        <ProgressBar current={step} total={6} />
+        <ProgressBar current={step} total={7} />
         
         <AnimatePresence mode="wait">
           <motion.div
@@ -161,12 +255,13 @@ export default function EnhancedOnboarding() {
             transition={{ duration: 0.3 }}
             style={styles.formContainer}
           >
-            {step === 0 && <BasicInfo data={freeData} setData={setFreeData} />}
-            {step === 1 && <FarmSize data={freeData} setData={setFreeData} />}
-            {step === 2 && <FarmingType data={freeData} setData={setFreeData} />}
-            {step === 3 && <CropsInfo data={freeData} setData={setFreeData} />}
-            {step === 4 && <PestControl data={freeData} setData={setFreeData} />}
-            {step === 5 && <DiseasesInfo data={freeData} setData={setFreeData} />}
+            {step === 0 && <AccountSetup email={email} setEmail={setEmail} password={password} setPassword={setPassword} />}
+            {step === 1 && <BasicInfo data={freeData} setData={setFreeData} />}
+            {step === 2 && <FarmSize data={freeData} setData={setFreeData} />}
+            {step === 3 && <FarmingType data={freeData} setData={setFreeData} />}
+            {step === 4 && <CropsInfo data={freeData} setData={setFreeData} />}
+            {step === 5 && <PestControl data={freeData} setData={setFreeData} />}
+            {step === 6 && <DiseasesInfo data={freeData} setData={setFreeData} />}
           </motion.div>
         </AnimatePresence>
 
@@ -177,7 +272,7 @@ export default function EnhancedOnboarding() {
             </button>
           )}
           
-          {step < 5 ? (
+          {step < 6 ? (
             <button onClick={() => setStep(step + 1)} style={styles.nextButton}>
               Next →
             </button>
@@ -191,8 +286,7 @@ export default function EnhancedOnboarding() {
     );
   }
 
-  // Include the voice to text here. 
-  // PAID VERSION - Quick 60-second Form
+  // PAID VERSION - Quick 60-second Form with Voice Input
   if (planType === "paid") {
     return (
       <div style={styles.page}>
@@ -204,6 +298,24 @@ export default function EnhancedOnboarding() {
         >
           <h1>Quick Setup (60 seconds)</h1>
           <p style={styles.subtitle}>We'll gather more details through WhatsApp</p>
+
+          <label style={styles.label}>Email</label>
+          <input
+            type="email"
+            placeholder="your@email.com"
+            value={email}
+            onChange={e => setEmail(e.target.value)}
+            style={styles.input}
+          />
+
+          <label style={styles.label}>Password</label>
+          <input
+            type="password"
+            placeholder="Create a password"
+            value={password}
+            onChange={e => setPassword(e.target.value)}
+            style={styles.input}
+          />
 
           <label style={styles.label}>Your Name</label>
           <input
@@ -222,6 +334,8 @@ export default function EnhancedOnboarding() {
             <option value="">Select island</option>
             <option value="Antigua">Antigua</option>
             <option value="Barbuda">Barbuda</option>
+            <option value="Nassau">Nassau</option>
+            <option value="Freeport">Freeport</option>
           </select>
 
           <label style={styles.label}>Settlement/Area</label>
@@ -247,7 +361,11 @@ export default function EnhancedOnboarding() {
             value={paidData.currentIssue}
             onChange={e => setPaidData({...paidData, currentIssue: e.target.value})}
             rows={3}
-            style={styles.input}
+            style={styles.textarea}
+          />
+          
+          <VoiceInput 
+            setText={(text) => setPaidData({...paidData, currentIssue: text})}
           />
 
           <button onClick={submitPaidVersion} style={styles.submitButton}>
@@ -281,6 +399,36 @@ function ProgressBar({ current, total }) {
 }
 
 // Form Step Components
+function AccountSetup({ email, setEmail, password, setPassword }) {
+  return (
+    <div style={styles.stepContent}>
+      <h2>🔐 Create Your Account</h2>
+      
+      <label style={styles.label}>Email Address</label>
+      <input
+        type="email"
+        placeholder="your@email.com"
+        value={email}
+        onChange={e => setEmail(e.target.value)}
+        style={styles.input}
+      />
+
+      <label style={styles.label}>Password</label>
+      <input
+        type="password"
+        placeholder="Choose a secure password"
+        value={password}
+        onChange={e => setPassword(e.target.value)}
+        style={styles.input}
+      />
+      
+      <p style={styles.helperText}>
+        💡 This will be used to log into your dashboard
+      </p>
+    </div>
+  );
+}
+
 function BasicInfo({ data, setData }) {
   return (
     <div style={styles.stepContent}>
@@ -296,12 +444,17 @@ function BasicInfo({ data, setData }) {
 
       <label style={styles.label}>Location</label>
       <div style={styles.locationGrid}>
-        <input
-          placeholder="Island"
+        <select
           value={data.location.island}
           onChange={e => setData({...data, location: {...data.location, island: e.target.value}})}
           style={styles.input}
-        />
+        >
+          <option value="">Select Island</option>
+          <option value="Antigua">Antigua</option>
+          <option value="Barbuda">Barbuda</option>
+          <option value="Nassau">Nassau</option>
+          <option value="Freeport">Freeport</option>
+        </select>
         <input
           placeholder="Settlement/Area"
           value={data.location.settlement}
@@ -340,9 +493,13 @@ function FarmSize({ data, setData }) {
       <textarea
         placeholder="Describe where you grow (e.g., backyard garden, 3 raised beds, open field)"
         value={data.growingSites.join(", ")}
-        onChange={e => setData({...data, growingSites: e.target.value.split(",")})}
+        onChange={e => setData({...data, growingSites: e.target.value.split(",").map(s => s.trim())})}
         rows={2}
-        style={styles.input}
+        style={styles.textarea}
+      />
+      
+      <VoiceInput 
+        setText={(text) => setData({...data, growingSites: text.split(",").map(s => s.trim())})}
       />
 
       <label style={styles.label}>Terrain Type</label>
@@ -491,7 +648,11 @@ function CropsInfo({ data, setData }) {
         value={data.cropDiversity}
         onChange={e => setData({...data, cropDiversity: e.target.value})}
         rows={3}
-        style={styles.input}
+        style={styles.textarea}
+      />
+      
+      <VoiceInput 
+        setText={(text) => setData({...data, cropDiversity: text})}
       />
     </div>
   );
@@ -711,7 +872,8 @@ const styles = {
     textAlign: "left",
     listStyle: "none",
     padding: 0,
-    margin: "1.5rem 0"
+    margin: "1.5rem 0",
+    lineHeight: "2"
   },
   selectButton: {
     width: "100%",
@@ -781,6 +943,16 @@ const styles = {
     borderRadius: "8px",
     boxSizing: "border-box"
   },
+  textarea: {
+    width: "100%",
+    padding: "0.75rem",
+    fontSize: "1rem",
+    border: "1px solid #ddd",
+    borderRadius: "8px",
+    boxSizing: "border-box",
+    fontFamily: "inherit",
+    resize: "vertical"
+  },
   locationGrid: {
     display: "grid",
     gridTemplateColumns: "1fr 1fr",
@@ -843,7 +1015,8 @@ const styles = {
     border: "none",
     borderRadius: "8px",
     cursor: "pointer",
-    whiteSpace: "nowrap"
+    whiteSpace: "nowrap",
+    fontWeight: "600"
   },
   tagContainer: {
     display: "flex",

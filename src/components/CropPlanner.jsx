@@ -1,5 +1,7 @@
 import React, { useState } from "react";
 import { motion } from "framer-motion";
+import { db } from "../firebase";
+import { collection, addDoc } from "firebase/firestore";
 
 // Crop database based on the spreadsheet
 const CROP_DATABASE = {
@@ -94,6 +96,7 @@ export default function CropPlanner({ userData }) {
   const [startDate, setStartDate] = useState(new Date().toISOString().split('T')[0]);
   const [numBeds, setNumBeds] = useState(1);
   const [schedule, setSchedule] = useState(null);
+  const [saving, setSaving] = useState(false);
 
   const generateSchedule = () => {
     const crop = CROP_DATABASE[selectedCrop];
@@ -127,7 +130,11 @@ export default function CropPlanner({ userData }) {
       cyclesPerYear,
       numBeds,
       totalSeeds: crop.seedsPerSowing * numBeds,
-      estimatedYield: calculateYield(selectedCrop, numBeds, cyclesPerYear)
+      estimatedYield: calculateYield(selectedCrop, numBeds, cyclesPerYear),
+      // Store as Date objects for Firebase
+      sowDate: traySowDate,
+      transplantDateObj: transplantDate,
+      harvestDate: harvestStartDate
     });
   };
 
@@ -144,6 +151,56 @@ export default function CropPlanner({ userData }) {
     };
     
     return yieldPerBedPerCycle[cropName] || "Variable";
+  };
+
+  const savePlan = async () => {
+    if (!userData?.userId) {
+      alert("Please log in to save plans");
+      return;
+    }
+
+    if (!schedule) {
+      alert("Please generate a schedule first");
+      return;
+    }
+
+    setSaving(true);
+
+    try {
+      // Save to activities collection as crop_plan
+      await addDoc(collection(db, "activities"), {
+        userId: userData.userId,
+        type: "crop_plan",
+        category: "farming",
+        title: `${schedule.crop} Planting Plan`,
+        message: `Plan for ${schedule.numBeds} bed(s) of ${schedule.crop}. Sow on ${schedule.traySowDate}, harvest starting ${schedule.harvestStartDate}.`,
+        icon: "🌱",
+        status: "planned",
+        data: {
+          cropName: schedule.crop,
+          sowDate: schedule.sowDate,
+          transplantDate: schedule.transplantDateObj,
+          harvestDate: schedule.harvestDate,
+          numBeds: schedule.numBeds,
+          seedsNeeded: schedule.totalSeeds,
+          spacing: schedule.cropData.spacing,
+          mulchRequired: schedule.cropData.mulch,
+          estimatedYield: schedule.estimatedYield,
+          totalCycleWeeks: schedule.totalCycleWeeks,
+          cyclesPerYear: schedule.cyclesPerYear
+        },
+        createdAt: new Date(),
+        expiresAt: null // Crop plans don't expire
+      });
+
+      alert("✅ Plan saved successfully! Check your dashboard.");
+      setSaving(false);
+
+    } catch (error) {
+      console.error("Error saving plan:", error);
+      alert("Failed to save plan. Please try again.");
+      setSaving(false);
+    }
   };
 
   return (
@@ -278,8 +335,16 @@ export default function CropPlanner({ userData }) {
             </ul>
           </div>
 
-          <button style={styles.saveButton}>
-            Save to My Planner
+          <button 
+            onClick={savePlan} 
+            style={{
+              ...styles.saveButton,
+              opacity: saving ? 0.7 : 1,
+              cursor: saving ? "not-allowed" : "pointer"
+            }}
+            disabled={saving}
+          >
+            {saving ? "Saving..." : "Save to My Planner"}
           </button>
         </motion.div>
       )}
@@ -471,6 +536,7 @@ const styles = {
     borderRadius: "8px",
     fontSize: "1rem",
     fontWeight: "600",
-    cursor: "pointer"
+    cursor: "pointer",
+    transition: "all 0.2s"
   }
 };

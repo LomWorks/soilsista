@@ -1,26 +1,87 @@
 import React, { useState, useEffect } from "react";
 import { motion } from "framer-motion";
+import { db, auth } from "../firebase";
+import { doc, getDoc, collection, query, where, orderBy, limit, getDocs } from "firebase/firestore";
+import { onAuthStateChanged } from "firebase/auth";
 import CropPlanner from "../components/CropPlanner";
 import WeatherWidget from "../components/WeatherWidget";
 
 export default function Dashboard() {
   const [userData, setUserData] = useState(null);
+  const [activities, setActivities] = useState([]);
   const [activeTab, setActiveTab] = useState("overview");
+  const [loading, setLoading] = useState(true);
+  const [user, setUser] = useState(null);
 
   useEffect(() => {
-    // In production, fetch user data from Firestore
-    // For now, using mock data
-    setUserData({
-      name: "Farmer John",
-      farmSize: "2 acres",
-      location: { island: "Antigua", settlement: "St. John's" },
-      crops: ["Kale", "Lettuce", "Tomatoes", "Sweet Peppers"],
-      farmingType: "Natural"
+    // Listen to auth state
+    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+      if (currentUser) {
+        setUser(currentUser);
+        fetchUserData(currentUser.uid);
+      } else {
+        // Redirect to login if not authenticated
+        window.location.href = "/get-started";
+      }
     });
+
+    return () => unsubscribe();
   }, []);
 
+  const fetchUserData = async (userId) => {
+    setLoading(true);
+    
+    try {
+      // Fetch user data
+      const userDoc = await getDoc(doc(db, "users", userId));
+      
+      if (userDoc.exists()) {
+        const data = userDoc.data();
+        setUserData({ id: userId, ...data });
+        
+        // Fetch user's activities
+        const activitiesQuery = query(
+          collection(db, "activities"),
+          where("userId", "==", userId),
+          orderBy("createdAt", "desc"),
+          limit(20)
+        );
+        
+        const activitiesSnapshot = await getDocs(activitiesQuery);
+        const activitiesData = activitiesSnapshot.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data()
+        }));
+        
+        setActivities(activitiesData);
+      } else {
+        console.error("User document not found");
+        // Redirect to onboarding if profile incomplete
+        window.location.href = "/get-started";
+      }
+      
+      setLoading(false);
+    } catch (error) {
+      console.error("Error fetching user data:", error);
+      setLoading(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div style={styles.loading}>
+        <div style={styles.spinner}></div>
+        <p>Loading your dashboard...</p>
+      </div>
+    );
+  }
+
   if (!userData) {
-    return <div style={styles.loading}>Loading your dashboard...</div>;
+    return (
+      <div style={styles.loading}>
+        <p>Unable to load dashboard. Please try again.</p>
+      </div>
+    );
   }
 
   return (
@@ -32,9 +93,12 @@ export default function Dashboard() {
         transition={{ duration: 0.5 }}
         style={styles.header}
       >
-        <h1>Welcome back, {userData.name}! 🌱</h1>
+        <h1>Welcome back, {userData.name || "Farmer"}! 🌱</h1>
         <p style={styles.subtitle}>
-          {userData.location.island} • {userData.farmSize} • {userData.farmingType} Farming
+          {userData.location?.island} • {userData.farmSize} • {userData.farmingType} Farming
+          {userData.planType === "paid" && (
+            <span style={styles.premiumBadge}>💬 Premium</span>
+          )}
         </p>
       </motion.div>
 
@@ -57,7 +121,13 @@ export default function Dashboard() {
 
       {/* Tab Content */}
       <div style={styles.content}>
-        {activeTab === "overview" && <OverviewTab userData={userData} />}
+        {activeTab === "overview" && (
+          <OverviewTab 
+            userData={userData} 
+            activities={activities}
+            user={user}
+          />
+        )}
         {activeTab === "planner" && <PlannerTab userData={userData} />}
         {activeTab === "weather" && <WeatherTab userData={userData} />}
         {activeTab === "resources" && <ResourcesTab />}
@@ -67,90 +137,184 @@ export default function Dashboard() {
 }
 
 // Overview Tab
-function OverviewTab({ userData }) {
+function OverviewTab({ userData, activities, user }) {
+  // Filter activities by type
+  const weatherAlerts = activities.filter(a => a.type === "weather_alert");
+  const cropPlans = activities.filter(a => a.type === "crop_plan");
+  const reminders = activities.filter(a => a.type === "reminder" && a.status !== "completed");
+  
   return (
     <div style={styles.tabContent}>
       <div style={styles.grid}>
         {/* Quick Stats */}
         <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.5, delay: 0.1 }}
           style={styles.card}
         >
           <h3>🌾 Your Farm</h3>
           <div style={styles.statGrid}>
             <div style={styles.stat}>
-              <span style={styles.statValue}>{userData.crops.length}</span>
+              <span style={styles.statValue}>{userData.currentCrops?.length || 0}</span>
               <span style={styles.statLabel}>Active Crops</span>
             </div>
             <div style={styles.stat}>
-              <span style={styles.statValue}>{userData.farmSize}</span>
-              <span style={styles.statLabel}>Farm Size</span>
+              <span style={styles.statValue}>{userData.stats?.cropsHarvested || 0}</span>
+              <span style={styles.statLabel}>Harvested</span>
             </div>
           </div>
         </motion.div>
 
         {/* Current Crops */}
         <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.5, delay: 0.2 }}
           style={styles.card}
         >
           <h3>🥬 Growing Now</h3>
-          <div style={styles.cropList}>
-            {userData.crops.map((crop, i) => (
-              <div key={i} style={styles.cropItem}>
-                <span>{crop}</span>
-                <span style={styles.cropStatus}>Healthy</span>
-              </div>
-            ))}
-          </div>
+          {userData.currentCrops && userData.currentCrops.length > 0 ? (
+            <div style={styles.cropList}>
+              {userData.currentCrops.map((crop, i) => (
+                <div key={i} style={styles.cropItem}>
+                  <span>{crop}</span>
+                  <span style={styles.cropStatus}>Active</span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p style={styles.emptyState}>No crops planted yet. Start planning!</p>
+          )}
         </motion.div>
 
         {/* Weather Alert */}
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ duration: 0.5, delay: 0.3 }}
-          style={{...styles.card, ...styles.alertCard}}
-        >
-          <h3>🌦️ Weather Alert</h3>
-          <p>Heavy rainfall expected this weekend. Consider:</p>
-          <ul style={styles.recommendations}>
-            <li>Check drainage systems</li>
-            <li>Harvest mature lettuce</li>
-            <li>Delay transplanting until next week</li>
-          </ul>
-        </motion.div>
+        {weatherAlerts.length > 0 && (
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.5, delay: 0.3 }}
+            style={{...styles.card, ...styles.alertCard}}
+          >
+            <h3>{weatherAlerts[0].icon} Weather Alert</h3>
+            <strong>{weatherAlerts[0].title}</strong>
+            <p style={styles.alertMessage}>{weatherAlerts[0].message}</p>
+            {weatherAlerts[0].data?.farmingAdvice && (
+              <ul style={styles.recommendations}>
+                {weatherAlerts[0].data.farmingAdvice.slice(0, 3).map((advice, i) => (
+                  <li key={i}>{advice}</li>
+                ))}
+              </ul>
+            )}
+          </motion.div>
+        )}
 
-        {/* Next Actions */}
+        {/* Paid User: Consultation Status */}
+        {userData.planType === "paid" && (
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.5, delay: 0.3 }}
+            style={{...styles.card, ...styles.consultationCard}}
+          >
+            <h3>💬 Expert Support</h3>
+            <div style={styles.consultationStatus}>
+              <span>Status:</span>
+              <span style={{
+                ...styles.statusBadge,
+                backgroundColor: userData.consultationStatus === "pending" ? "#E6A93C" : "#7FB34D"
+              }}>
+                {userData.consultationStatus || "Ready"}
+              </span>
+            </div>
+            {userData.currentIssue && (
+              <p style={styles.currentIssue}>
+                <strong>Current Issue:</strong> {userData.currentIssue}
+              </p>
+            )}
+            <a 
+              href={`https://wa.me/${userData.phone}`} 
+              style={styles.whatsappButton}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              💬 Message on WhatsApp
+            </a>
+          </motion.div>
+        )}
+
+        {/* Upcoming Tasks/Reminders */}
         <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.5, delay: 0.4 }}
           style={styles.card}
         >
-          <h3>📋 This Week's Tasks</h3>
-          <div style={styles.taskList}>
-            <TaskItem task="Sow Romaine lettuce" date="Today" />
-            <TaskItem task="Transplant Kale seedlings" date="Thursday" />
-            <TaskItem task="Harvest Asian Greens" date="Friday" />
-          </div>
+          <h3>📋 Upcoming Tasks</h3>
+          {reminders.length > 0 ? (
+            <div style={styles.taskList}>
+              {reminders.slice(0, 5).map((reminder) => (
+                <TaskItem 
+                  key={reminder.id} 
+                  reminder={reminder}
+                />
+              ))}
+            </div>
+          ) : (
+            <p style={styles.emptyState}>No upcoming tasks. Check the planner!</p>
+          )}
+        </motion.div>
+
+        {/* Recent Activity */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5, delay: 0.5 }}
+          style={styles.card}
+        >
+          <h3>📊 Recent Activity</h3>
+          {activities.length > 0 ? (
+            <div style={styles.activityList}>
+              {activities.slice(0, 5).map((activity) => (
+                <div key={activity.id} style={styles.activityItem}>
+                  <span style={styles.activityIcon}>{activity.icon}</span>
+                  <div style={styles.activityContent}>
+                    <div style={styles.activityTitle}>{activity.title}</div>
+                    <div style={styles.activityType}>{activity.type.replace('_', ' ')}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p style={styles.emptyState}>No activity yet. Start planning your crops!</p>
+          )}
         </motion.div>
       </div>
     </div>
   );
 }
 
-function TaskItem({ task, date }) {
+function TaskItem({ reminder }) {
+  const getDateLabel = (scheduledFor) => {
+    if (!scheduledFor) return "Soon";
+    
+    const date = scheduledFor.toDate ? scheduledFor.toDate() : new Date(scheduledFor);
+    const today = new Date();
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    
+    if (date.toDateString() === today.toDateString()) return "Today";
+    if (date.toDateString() === tomorrow.toDateString()) return "Tomorrow";
+    
+    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  };
+
   return (
     <div style={styles.taskItem}>
-      <input type="checkbox" style={styles.checkbox} />
+      <span style={styles.taskIcon}>{reminder.icon}</span>
       <div>
-        <div style={styles.taskText}>{task}</div>
-        <div style={styles.taskDate}>{date}</div>
+        <div style={styles.taskText}>{reminder.message}</div>
+        <div style={styles.taskDate}>{getDateLabel(reminder.scheduledFor)}</div>
       </div>
     </div>
   );
@@ -185,41 +349,9 @@ function WeatherTab({ userData }) {
     >
       <h2>🌤️ Climate & Weather Data</h2>
       <p style={styles.description}>
-        Real-time weather and climate insights for {userData.location.island}
+        Real-time weather and climate insights for {userData.location?.island || "your location"}
       </p>
       <WeatherWidget location={userData.location} />
-      
-      <div style={styles.weatherGrid}>
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ duration: 0.5, delay: 0.1 }}
-          style={styles.weatherCard}
-        >
-          <h3>7-Day Forecast</h3>
-          <p>Integration with weather API coming soon</p>
-        </motion.div>
-        
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ duration: 0.5, delay: 0.2 }}
-          style={styles.weatherCard}
-        >
-          <h3>Seasonal Trends</h3>
-          <p>Historical climate data analysis</p>
-        </motion.div>
-        
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ duration: 0.5, delay: 0.3 }}
-          style={styles.weatherCard}
-        >
-          <h3>Rainfall Tracker</h3>
-          <p>Monthly precipitation patterns</p>
-        </motion.div>
-      </div>
     </motion.div>
   );
 }
@@ -275,8 +407,8 @@ function ResourcesTab() {
         {resources.map((resource, i) => (
           <motion.div
             key={i}
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.5, delay: 0.1 + (i * 0.05) }}
             whileHover={{ scale: 1.02 }}
             style={styles.resourceCard}
@@ -302,10 +434,20 @@ const styles = {
   loading: {
     minHeight: "100vh",
     display: "flex",
+    flexDirection: "column",
     alignItems: "center",
     justifyContent: "center",
     fontSize: "1.2rem",
     color: "#666"
+  },
+  spinner: {
+    width: "50px",
+    height: "50px",
+    border: "5px solid #f3f3f3",
+    borderTop: "5px solid var(--soil-green)",
+    borderRadius: "50%",
+    animation: "spin 1s linear infinite",
+    marginBottom: "1rem"
   },
   header: {
     marginBottom: "2rem",
@@ -314,7 +456,20 @@ const styles = {
   subtitle: {
     color: "#666",
     fontSize: "1rem",
-    marginTop: "0.5rem"
+    marginTop: "0.5rem",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: "0.5rem",
+    flexWrap: "wrap"
+  },
+  premiumBadge: {
+    background: "var(--soil-green)",
+    color: "white",
+    padding: "0.25rem 0.75rem",
+    borderRadius: "12px",
+    fontSize: "0.85rem",
+    fontWeight: "600"
   },
   tabs: {
     display: "flex",
@@ -361,6 +516,14 @@ const styles = {
     background: "#FFF4E6",
     border: "2px solid var(--sun-mustard)"
   },
+  consultationCard: {
+    background: "#F0F9F4",
+    border: "2px solid var(--soil-green)"
+  },
+  alertMessage: {
+    marginTop: "0.5rem",
+    color: "#666"
+  },
   statGrid: {
     display: "grid",
     gridTemplateColumns: "1fr 1fr",
@@ -401,7 +564,45 @@ const styles = {
   },
   recommendations: {
     marginTop: "1rem",
-    paddingLeft: "1.25rem"
+    paddingLeft: "1.25rem",
+    color: "#666"
+  },
+  consultationStatus: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    padding: "0.75rem",
+    background: "white",
+    borderRadius: "8px",
+    marginTop: "1rem"
+  },
+  statusBadge: {
+    padding: "0.25rem 0.75rem",
+    borderRadius: "12px",
+    color: "white",
+    fontSize: "0.85rem",
+    fontWeight: "600",
+    textTransform: "uppercase"
+  },
+  currentIssue: {
+    marginTop: "1rem",
+    padding: "0.75rem",
+    background: "white",
+    borderRadius: "8px",
+    fontSize: "0.9rem",
+    color: "#666"
+  },
+  whatsappButton: {
+    display: "block",
+    marginTop: "1rem",
+    padding: "0.75rem",
+    background: "#25D366",
+    color: "white",
+    textAlign: "center",
+    borderRadius: "8px",
+    textDecoration: "none",
+    fontWeight: "600",
+    transition: "all 0.2s"
   },
   taskList: {
     marginTop: "1rem"
@@ -410,35 +611,56 @@ const styles = {
     display: "flex",
     gap: "0.75rem",
     padding: "0.75rem",
-    borderBottom: "1px solid #f0f0f0"
+    borderBottom: "1px solid #f0f0f0",
+    alignItems: "flex-start"
   },
-  checkbox: {
-    marginTop: "0.25rem",
-    cursor: "pointer"
+  taskIcon: {
+    fontSize: "1.5rem"
   },
   taskText: {
-    fontWeight: "500"
+    fontWeight: "500",
+    fontSize: "0.95rem"
   },
   taskDate: {
     fontSize: "0.85rem",
     color: "#666",
     marginTop: "0.25rem"
   },
+  activityList: {
+    marginTop: "1rem"
+  },
+  activityItem: {
+    display: "flex",
+    gap: "0.75rem",
+    padding: "0.75rem",
+    borderBottom: "1px solid #f0f0f0",
+    alignItems: "center"
+  },
+  activityIcon: {
+    fontSize: "1.5rem"
+  },
+  activityContent: {
+    flex: 1
+  },
+  activityTitle: {
+    fontSize: "0.95rem",
+    fontWeight: "500"
+  },
+  activityType: {
+    fontSize: "0.8rem",
+    color: "#999",
+    marginTop: "0.25rem",
+    textTransform: "capitalize"
+  },
+  emptyState: {
+    textAlign: "center",
+    color: "#999",
+    padding: "2rem",
+    fontStyle: "italic"
+  },
   description: {
     color: "#666",
     marginBottom: "2rem"
-  },
-  weatherGrid: {
-    display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(250px, 1fr))",
-    gap: "1.5rem",
-    marginTop: "2rem"
-  },
-  weatherCard: {
-    background: "white",
-    padding: "1.5rem",
-    borderRadius: "12px",
-    boxShadow: "0 2px 4px rgba(0,0,0,0.1)"
   },
   resourceGrid: {
     display: "grid",
@@ -471,6 +693,25 @@ const styles = {
     border: "none",
     borderRadius: "6px",
     cursor: "pointer",
-    fontSize: "0.9rem"
+    fontSize: "0.9rem",
+    fontWeight: "600"
   }
 };
+
+// Add spinner animation
+const styleSheet = document.createElement("style");
+styleSheet.textContent = `
+  @keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+  }
+  
+  @keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+`;
+if (!document.querySelector('style[data-dashboard]')) {
+  styleSheet.setAttribute('data-dashboard', '');
+  document.head.appendChild(styleSheet);
+}

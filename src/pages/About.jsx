@@ -20,7 +20,7 @@ export default function About() {
         transition={{ duration: 0.5, delay: 0.1 }}
         style={styles.section}
       >
-        <h2>Our Mission</h2>
+        <h2>Mission</h2>
         <p>
           Soil Sista blends regional climate data with personal farming goals to guide sustainable growth 
           across The Bahamas and the wider Caribbean. We're building a platform that puts the power 

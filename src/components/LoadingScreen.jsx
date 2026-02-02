@@ -1,8 +1,15 @@
+// This can be made to be more visually appealing (they just look like lines and somewhat messy), it also cycles through too fast (fix interval logic, give each animation enough time to actually play out, also give the messages time to be read). 
+
 import React, { useState, useEffect } from "react";
-import { motion } from "framer-motion";
+import { motion, AnimatePresence } from "framer-motion";
 
 export default function LoadingScreen() {
   const [loadingPhase, setLoadingPhase] = useState(0);
+
+  // at top of component
+
+// in JSX
+{animationChoice === 'watering' ? <WateringPlant /> : <BloomingLettuce />}
   
   const messages = [
     "Analyzing your farm data...",
@@ -11,12 +18,16 @@ export default function LoadingScreen() {
     "Almost ready!"
   ];
 
+  // Choose the animation once on mount so it doesn't switch mid-animation
+  const [animationChoice] = useState(() => Math.random() > 0.5 ? 'watering' : 'lettuce');
+
   useEffect(() => {
+    const intervalMs = 4500; // Give each message and animation ample time to play
     const interval = setInterval(() => {
-      setLoadingPhase(prev => (prev + 1) % 4);
-    }, 750);
+      setLoadingPhase(prev => (prev + 1) % messages.length);
+    }, intervalMs);
     return () => clearInterval(interval);
-  }, []);
+  }, [messages.length]);
 
   return (
     <div style={styles.container}>
@@ -25,17 +36,21 @@ export default function LoadingScreen() {
         animate={{ opacity: 1 }}
         style={styles.content}
       >
-        {/* Choose random animation */}
-        {Math.random() > 0.5 ? <WateringPlant /> : <BloomingLettuce />}
+        {/* Chosen animation for this loading session */}
+        {animationChoice === 'watering' ? <WateringPlant /> : <BloomingLettuce />}
         
-        <motion.p
-          key={loadingPhase}
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          style={styles.message}
-        >
-          {messages[loadingPhase]}
-        </motion.p>
+        <AnimatePresence mode="wait">
+          <motion.p
+            key={loadingPhase}
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+            transition={{ duration: 0.6 }}
+            style={styles.message}
+          >
+            {messages[loadingPhase]}
+          </motion.p>
+        </AnimatePresence>
       </motion.div>
     </div>
   );
@@ -79,7 +94,7 @@ function WateringPlant() {
         strokeLinecap="round"
         initial={{ pathLength: 0 }}
         animate={{ pathLength: 1 }}
-        transition={{ duration: 1, delay: 0.5 }}
+        transition={{ duration: 1.8, delay: 0.5, ease: "easeOut" }}
       />
       
       {/* Leaves */}
@@ -91,7 +106,7 @@ function WateringPlant() {
         fill="var(--deep-leaf)"
         initial={{ scale: 0 }}
         animate={{ scale: 1 }}
-        transition={{ delay: 1.2, type: "spring" }}
+        transition={{ delay: 1.3, type: "spring", stiffness: 140, damping: 14 }}
       />
       <motion.ellipse
         cx="115"
@@ -101,7 +116,7 @@ function WateringPlant() {
         fill="var(--deep-leaf)"
         initial={{ scale: 0 }}
         animate={{ scale: 1 }}
-        transition={{ delay: 1.4, type: "spring" }}
+        transition={{ delay: 1.6, type: "spring", stiffness: 140, damping: 14 }}
       />
       <motion.ellipse
         cx="90"
@@ -111,18 +126,19 @@ function WateringPlant() {
         fill="var(--soil-green)"
         initial={{ scale: 0 }}
         animate={{ scale: 1 }}
-        transition={{ delay: 1.6, type: "spring" }}
+        transition={{ delay: 1.9, type: "spring", stiffness: 140, damping: 14 }}
       />
       
       {/* Watering Can */}
       <motion.g
-        initial={{ x: 150, y: -50 }}
+        initial={{ x: 150, y: -50, opacity: 0 }}
         animate={{ 
           x: [150, 50, 50],
           y: [-50, -50, 20],
-          rotate: [0, 0, -20]
+          rotate: [0, 0, -20],
+          opacity: [0, 1, 1]
         }}
-        transition={{ duration: 2, times: [0, 0.5, 1] }}
+        transition={{ duration: 3, times: [0, 0.6, 1], ease: "easeInOut" }}
       >
         {/* Can Body */}
         <rect x="0" y="0" width="30" height="25" rx="4" fill="var(--deep-leaf)" stroke="var(--ink-black)" strokeWidth="1.5"/>
@@ -152,12 +168,11 @@ function WateringPlant() {
 }
 
 function WaterDrops() {
+  // Fewer drops, slower fall so it's subtle and legible
   const drops = [
-    { x: 80, delay: 2 },
-    { x: 85, delay: 2.1 },
-    { x: 90, delay: 2.2 },
-    { x: 95, delay: 2.15 },
-    { x: 100, delay: 2.25 }
+    { x: 82, delay: 2.2 },
+    { x: 92, delay: 2.5 },
+    { x: 102, delay: 2.8 }
   ];
 
   return (
@@ -166,25 +181,26 @@ function WaterDrops() {
         <motion.circle
           key={i}
           cx={drop.x}
-          cy="30"
-          r="1.5" // Smaller drops
+          cy="10"
+          r="2" // slightly larger for visibility
           fill="#6CB4EE"
-          initial={{ y: 0, opacity: 0.3 }} // Start more transparent
+          initial={{ y: -10, opacity: 0.35 }}
           animate={{ 
-            y: [0, 110],
-            opacity: [0.3, 0.4, 0] // More subtle opacity range
+            y: [ -10, 110 ],
+            opacity: [0.35, 0.5, 0]
           }}
           transition={{
             delay: drop.delay,
-            duration: 0.8,
+            duration: 1.2,
+            ease: "easeOut",
             repeat: Infinity,
-            repeatDelay: 1.5
+            repeatDelay: 3.0
           }}
         />
       ))}
     </>
   );
-}
+} 
 
 // Blooming Lettuce Animation
 function BloomingLettuce() {
@@ -219,58 +235,58 @@ function BloomingLettuce() {
       {/* Center leaves */}
       <LettuceLeaf
         d="M 100 130 Q 90 115 85 100 Q 90 90 100 95 Q 110 90 115 100 Q 110 115 100 130"
-        delay={0.5}
+        delay={0.9}
         color="var(--deep-leaf)"
       />
       <LettuceLeaf
         d="M 100 125 Q 95 112 92 100 Q 95 92 100 96 Q 105 92 108 100 Q 105 112 100 125"
-        delay={0.6}
+        delay={1.0}
         color="var(--soil-green)"
       />
       
       {/* Outer leaves blooming */}
       <LettuceLeaf
         d="M 100 130 Q 75 120 60 110 Q 55 100 65 95 Q 75 100 100 110"
-        delay={0.8}
+        delay={1.2}
         color="var(--deep-leaf)"
       />
       <LettuceLeaf
         d="M 100 130 Q 125 120 140 110 Q 145 100 135 95 Q 125 100 100 110"
-        delay={0.85}
+        delay={1.25}
         color="var(--deep-leaf)"
       />
       <LettuceLeaf
         d="M 100 120 Q 80 115 70 105 Q 68 95 75 92 Q 85 95 100 105"
-        delay={0.9}
+        delay={1.3}
         color="#7FB34D"
       />
       <LettuceLeaf
         d="M 100 120 Q 120 115 130 105 Q 132 95 125 92 Q 115 95 100 105"
-        delay={0.95}
+        delay={1.35}
         color="#7FB34D"
       />
       
       {/* More outer frilly leaves */}
       <LettuceLeaf
         d="M 100 125 Q 70 118 55 108 Q 50 98 58 93 Q 70 97 100 108"
-        delay={1.0}
+        delay={1.4}
         color="var(--soil-green)"
       />
       <LettuceLeaf
         d="M 100 125 Q 130 118 145 108 Q 150 98 142 93 Q 130 97 100 108"
-        delay={1.05}
+        delay={1.45}
         color="var(--soil-green)"
       />
       
       {/* Top leaves */}
       <LettuceLeaf
         d="M 100 115 Q 90 105 85 90 Q 88 80 95 85 Q 100 80 100 95"
-        delay={1.1}
+        delay={1.5}
         color="#9BC76D"
       />
       <LettuceLeaf
         d="M 100 115 Q 110 105 115 90 Q 112 80 105 85 Q 100 80 100 95"
-        delay={1.15}
+        delay={1.55}
         color="#9BC76D"
       />
       
@@ -294,13 +310,14 @@ function LettuceLeaf({ d, delay, color }) {
       }}
       transition={{
         delay,
-        duration: 0.6,
+        duration: 1.1,
         type: "spring",
-        stiffness: 200
+        stiffness: 120,
+        damping: 14
       }}
     />
   );
-}
+} 
 
 function Sparkles() {
   const sparklePositions = [
@@ -329,10 +346,10 @@ function Sparkles() {
               scale: [0, 1, 0]
             }}
             transition={{
-              delay: 1.5 + (i * 0.1),
-              duration: 0.8,
+              delay: 2.2 + (i * 0.25),
+              duration: 1.2,
               repeat: Infinity,
-              repeatDelay: 2
+              repeatDelay: 4
             }}
           />
           <motion.line
@@ -349,10 +366,10 @@ function Sparkles() {
               scale: [0, 1, 0]
             }}
             transition={{
-              delay: 1.5 + (i * 0.1),
-              duration: 0.8,
+              delay: 2.2 + (i * 0.25),
+              duration: 1.2,
               repeat: Infinity,
-              repeatDelay: 2
+              repeatDelay: 4
             }}
           />
         </motion.g>
@@ -381,7 +398,8 @@ const styles = {
     gap: "2rem"
   },
   svg: {
-    filter: "drop-shadow(0 2px 4px rgba(0,0,0,0.1))"
+    filter: "drop-shadow(0 6px 12px rgba(0,0,0,0.12))",
+    transformOrigin: "center"
   },
   message: {
     fontSize: "1.2rem",
