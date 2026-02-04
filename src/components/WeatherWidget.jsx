@@ -4,38 +4,60 @@ import { motion } from "framer-motion";
 export default function WeatherWidget({ location }) {
   const [weather, setWeather] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [island, setIsland] = useState(); 
+  const [error, setError] = useState(null);
 
   useEffect(() => {
-    // Mock weather data - in production, integrate with an actual api that can utilize bahamian weather data.
-    const mockWeatherData = {
-      current: {
-        temp: 28,
-        condition: "Partly Cloudy",
-        humidity: 75,
-        windSpeed: 15,
-        rainfall: 0
-      },
-      forecast: [
-        { day: "Today", high: 30, low: 24, condition: "Sunny", rain: 10 },
-        { day: "Thu", high: 29, low: 23, condition: "Partly Cloudy", rain: 20 },
-        { day: "Fri", high: 28, low: 23, condition: "Rainy", rain: 80 },
-        { day: "Sat", high: 27, low: 22, condition: "Rainy", rain: 70 },
-        { day: "Sun", high: 29, low: 24, condition: "Partly Cloudy", rain: 30 }
-      ],
-      alerts: [
-        {
-          type: "warning",
-          title: "Heavy Rainfall Expected",
-          message: "High chance of rain this weekend. Prepare drainage and consider early harvest."
+    const fetchWeather = async () => {
+      try {
+        setLoading(true);
+        setError(null);
+
+        // Use location.island for the API call
+        const response = await fetch(
+          `https://api.weatherapi.com/v1/forecast.json?key=${process.env.REACT_APP_WEATHER_API_KEY}&q=${location.island},Bahamas&days=5&aqi=no&alerts=yes`
+        );
+
+        if (!response.ok) {
+          throw new Error('Failed to fetch weather data');
         }
-      ]
+
+        const data = await response.json();
+
+        // Transform API response to match our component structure
+        const transformedData = {
+          current: {
+            temp: Math.round(data.current.temp_c),
+            condition: data.current.condition.text,
+            humidity: data.current.humidity,
+            windSpeed: Math.round(data.current.wind_kph),
+            rainfall: data.current.precip_mm
+          },
+          forecast: data.forecast.forecastday.map(day => ({
+            day: new Date(day.date).toLocaleDateString('en-US', { weekday: 'short' }),
+            high: Math.round(day.day.maxtemp_c),
+            low: Math.round(day.day.mintemp_c),
+            condition: day.day.condition.text,
+            rain: day.day.daily_chance_of_rain
+          })),
+          alerts: data.alerts?.alert?.map(alert => ({
+            type: "warning",
+            title: alert.headline,
+            message: alert.desc
+          })) || []
+        };
+
+        setWeather(transformedData);
+        setLoading(false);
+      } catch (err) {
+        console.error('Weather fetch error:', err);
+        setError(err.message);
+        setLoading(false);
+      }
     };
 
-    setTimeout(() => {
-      setWeather(mockWeatherData);
-      setLoading(false);
-    }, 1000);
+    if (location?.island) {
+      fetchWeather();
+    }
   }, [location]);
 
   if (loading) {
@@ -47,10 +69,19 @@ export default function WeatherWidget({ location }) {
     );
   }
 
-  if (!weather) {
+  if (error) {
     return (
       <div style={styles.error}>
         <p>Unable to load weather data</p>
+        <p style={styles.errorSub}>{error}</p>
+      </div>
+    );
+  }
+
+  if (!weather) {
+    return (
+      <div style={styles.error}>
+        <p>No weather data available</p>
       </div>
     );
   }
@@ -124,17 +155,45 @@ export default function WeatherWidget({ location }) {
       >
         <h4>🌱 Weather-Based Tips</h4>
         <ul style={styles.tipsList}>
-          <li>Heavy rain expected this weekend - check drainage systems</li>
-          <li>High humidity levels - monitor for fungal diseases</li>
-          <li>Good planting conditions expected early next week</li>
+          {getWeatherTips(weather)}
         </ul>
       </motion.div>
 
       <p style={styles.footer}>
-        Data powered by IICA Climate Services • Updated hourly
+        Weather data for {location.island} • Updated hourly
       </p>
     </div>
   );
+}
+
+function getWeatherTips(weather) {
+  const tips = [];
+  
+  // Check for heavy rain in forecast
+  const heavyRainDays = weather.forecast.filter(day => day.rain > 60);
+  if (heavyRainDays.length > 0) {
+    tips.push('Heavy rain expected - check drainage systems and secure young plants');
+  }
+  
+  // Check humidity
+  if (weather.current.humidity > 70) {
+    tips.push('High humidity levels - monitor crops for fungal diseases');
+  }
+  
+  // Check for good planting conditions
+  const goodDays = weather.forecast.filter(day => 
+    day.rain < 30 && day.high < 32 && day.high > 24
+  );
+  if (goodDays.length >= 2) {
+    tips.push('Good planting conditions expected in the next few days');
+  }
+  
+  // Check wind
+  if (weather.current.windSpeed > 25) {
+    tips.push('Strong winds - secure tall plants and check supports');
+  }
+  
+  return tips.length > 0 ? tips : ['Weather conditions are favorable for normal farming activities'];
 }
 
 function DetailItem({ icon, label, value }) {
@@ -170,15 +229,16 @@ function ForecastDay({ day }) {
 }
 
 function getWeatherEmoji(condition) {
-  const emojiMap = {
-    "Sunny": "☀️",
-    "Partly Cloudy": "⛅",
-    "Cloudy": "☁️",
-    "Rainy": "🌧️",
-    "Stormy": "⛈️",
-    "Windy": "💨"
-  };
-  return emojiMap[condition] || "🌤️";
+  const conditionLower = condition.toLowerCase();
+  
+  if (conditionLower.includes('sunny') || conditionLower.includes('clear')) return '☀️';
+  if (conditionLower.includes('partly cloudy')) return '⛅';
+  if (conditionLower.includes('cloudy') || conditionLower.includes('overcast')) return '☁️';
+  if (conditionLower.includes('rain') || conditionLower.includes('drizzle')) return '🌧️';
+  if (conditionLower.includes('storm') || conditionLower.includes('thunder')) return '⛈️';
+  if (conditionLower.includes('wind')) return '💨';
+  
+  return '🌤️';
 }
 
 const styles = {

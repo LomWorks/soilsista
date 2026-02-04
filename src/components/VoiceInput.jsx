@@ -1,14 +1,11 @@
-import { useState } from "react";
 import MicOrb from "./MicOrb"; // Make sure this path is correct
 
 export default function VoiceInput({ setText }) {
-  const [listening, setListening] = useState(false);
-
   return (
     <div style={styles.container}>
       <MicOrb
         onTranscript={(transcript) => setText(transcript)}
-        placeholder={listening ? "🟢 Listening... Tap again to stop" : "Tap to speak"}
+        placeholder="Tap to speak"
       />
     </div>
   );

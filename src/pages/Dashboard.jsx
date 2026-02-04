@@ -137,10 +137,9 @@ export default function Dashboard() {
 }
 
 // Overview Tab
-function OverviewTab({ userData, activities, user }) {
+function OverviewTab({ userData, activities }) {
   // Filter activities by type
   const weatherAlerts = activities.filter(a => a.type === "weather_alert");
-  const cropPlans = activities.filter(a => a.type === "crop_plan");
   const reminders = activities.filter(a => a.type === "reminder" && a.status !== "completed");
   
   return (
