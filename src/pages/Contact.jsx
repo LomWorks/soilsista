@@ -114,7 +114,7 @@ export default function Contact() {
           <div style={styles.infoGrid}>
             <div style={styles.infoItem}>
               <span style={styles.infoIcon}>📱</span>
-              <span>soilsista.bs</span>
+              <span>Instagram: soilsista.bs</span>
             </div>
             <div style={styles.infoItem}>
               <span style={styles.infoIcon}>📱</span>
