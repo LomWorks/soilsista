@@ -6,10 +6,8 @@ import { motion, AnimatePresence } from "framer-motion";
 export default function LoadingScreen() {
   const [loadingPhase, setLoadingPhase] = useState(0);
 
-  // at top of component
-
-// in JSX
-{animationChoice === 'watering' ? <WateringPlant /> : <BloomingLettuce />}
+  // Choose the animation once on mount so it doesn't switch mid-animation
+  const [animationChoice] = useState(() => Math.random() > 0.5 ? 'watering' : 'lettuce');
   
   const messages = [
     "Analyzing your farm data...",
@@ -17,9 +15,6 @@ export default function LoadingScreen() {
     "Preparing your personalized plan...",
     "Almost ready!"
   ];
-
-  // Choose the animation once on mount so it doesn't switch mid-animation
-  const [animationChoice] = useState(() => Math.random() > 0.5 ? 'watering' : 'lettuce');
 
   useEffect(() => {
     const intervalMs = 4500; // Give each message and animation ample time to play
