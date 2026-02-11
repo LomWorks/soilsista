@@ -1,4 +1,4 @@
-import MicOrb from "./MicOrb"; // Make sure this path is correct
+import MicOrb from "./MicOrb"; 
 
 export default function VoiceInput({ setText }) {
   return (

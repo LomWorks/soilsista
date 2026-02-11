@@ -1,5 +1,3 @@
-// This can be made to be more visually appealing (they just look like lines and somewhat messy), it also cycles through too fast (fix interval logic, give each animation enough time to actually play out, also give the messages time to be read). 
-
 import React, { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 

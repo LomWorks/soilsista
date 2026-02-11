@@ -3,7 +3,7 @@ import { motion } from "framer-motion";
 import { db } from "../firebase";
 import { collection, addDoc } from "firebase/firestore";
 
-// Crop database based on the spreadsheet
+// Crop database based on the spreadsheet given
 const CROP_DATABASE = {
   "Kale": {
     weeksToHarvest: 8,
@@ -15,6 +15,8 @@ const CROP_DATABASE = {
     sowingPerWeek: 6,
     mulch: true,
     seedsPerSowing: 360,
+    yieldPerBed: 100, // lbs per bed per cycle
+    yieldUnit: "lbs",
     varieties: ["Darkibor", "Lacianato", "Kalettes"]
   },
   "Romaine Lettuce": {
@@ -27,6 +29,8 @@ const CROP_DATABASE = {
     sowingPerWeek: 1,
     mulch: true,
     seedsPerSowing: 432,
+    yieldPerBed: 360, // heads per bed
+    yieldUnit: "heads",
     varieties: ["Salvius", "Muir"]
   },
   "Asian Greens": {
@@ -39,6 +43,8 @@ const CROP_DATABASE = {
     sowingPerWeek: 3,
     mulch: false,
     seedsPerSowing: 2.4,
+    yieldPerBed: 40,
+    yieldUnit: "lbs",
     varieties: ["Mizuna", "Tatsoi", "Red Giant"]
   },
   "Swiss Chard": {
@@ -51,6 +57,8 @@ const CROP_DATABASE = {
     sowingPerWeek: 1,
     mulch: true,
     seedsPerSowing: 400,
+    yieldPerBed: 600,
+    yieldUnit: "bunches",
     varieties: ["Bright Lights"]
   },
   "Zucchini": {
@@ -63,6 +71,8 @@ const CROP_DATABASE = {
     sowingPerWeek: 1,
     mulch: true,
     seedsPerSowing: 60,
+    yieldPerBed: 200,
+    yieldUnit: "lbs",
     varieties: ["Tigress"]
   },
   "Tomatoes": {
@@ -75,6 +85,8 @@ const CROP_DATABASE = {
     sowingPerWeek: 1,
     mulch: true,
     seedsPerSowing: 120,
+    yieldPerBed: 300,
+    yieldUnit: "lbs",
     varieties: ["Roma", "Cherry", "Beefsteak"]
   },
   "Sweet Peppers": {
@@ -87,23 +99,54 @@ const CROP_DATABASE = {
     sowingPerWeek: 1,
     mulch: true,
     seedsPerSowing: 120,
+    yieldPerBed: 150,
+    yieldUnit: "lbs",
     varieties: ["Bell", "Sweet Banana"]
   }
 };
 
 export default function CropPlanner({ userData }) {
-  const [selectedCrop, setSelectedCrop] = useState("Kale");
+  const [selectedCrop, setSelectedCrop] = useState("");
   const [startDate, setStartDate] = useState(new Date().toISOString().split('T')[0]);
   const [numBeds, setNumBeds] = useState(1);
+  const [growingSeasonWeeks, setGrowingSeasonWeeks] = useState(52); // Year-round for Caribbean
   const [schedule, setSchedule] = useState(null);
   const [saving, setSaving] = useState(false);
+  const [errors, setErrors] = useState({});
+
+  const validateInputs = () => {
+    const newErrors = {};
+    
+    if (!selectedCrop) {
+      newErrors.crop = "Please select a crop";
+    }
+    
+    const selectedDate = new Date(startDate);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    
+    if (selectedDate < today) {
+      newErrors.date = "Start date cannot be in the past";
+    }
+    
+    if (numBeds < 1 || numBeds > 100) {
+      newErrors.beds = "Number of beds must be between 1 and 100";
+    }
+    
+    setErrors(newErrors);
+    return Object.keys(newErrors).length === 0;
+  };
 
   const generateSchedule = () => {
+    if (!validateInputs()) {
+      return;
+    }
+
     const crop = CROP_DATABASE[selectedCrop];
     const start = new Date(startDate);
     
     // Calculate total cycle weeks
-    const totalCycle = crop.weeksToHarvest + crop.weeksOfHarvest + crop.stalebedWeeks - crop.weeksInTrays;
+    const totalCycle = crop.weeksToHarvest + crop.weeksOfHarvest + crop.stalebedWeeks;
     
     // Calculate key dates
     const traySowDate = new Date(start);
@@ -116,41 +159,39 @@ export default function CropPlanner({ userData }) {
     const harvestEndDate = new Date(harvestStartDate);
     harvestEndDate.setDate(harvestEndDate.getDate() + (crop.weeksOfHarvest * 7));
     
-    // Calculate succession plantings (if applicable)
-    const cyclesPerYear = Math.floor(28 / totalCycle); // Assuming 28 week growing season
+    const bedTurnoverDate = new Date(harvestEndDate);
+    bedTurnoverDate.setDate(bedTurnoverDate.getDate() + (crop.stalebedWeeks * 7));
+    
+    // Calculate succession plantings
+    const cyclesPerYear = Math.floor(growingSeasonWeeks / totalCycle);
+    
+    // Calculate total yield
+    const totalYield = crop.yieldPerBed * numBeds * cyclesPerYear;
+    
+    // Calculate succession planting interval
+    const successionInterval = Math.ceil(totalCycle / 2);
     
     setSchedule({
       crop: selectedCrop,
       cropData: crop,
       traySowDate: traySowDate.toLocaleDateString(),
-      transplantDate: transplantDate.toLocaleDateString(),
+      transplantDate: crop.weeksInTrays > 0 ? transplantDate.toLocaleDateString() : null,
       harvestStartDate: harvestStartDate.toLocaleDateString(),
       harvestEndDate: harvestEndDate.toLocaleDateString(),
+      bedTurnoverDate: crop.stalebedWeeks > 0 ? bedTurnoverDate.toLocaleDateString() : null,
       totalCycleWeeks: totalCycle,
       cyclesPerYear,
       numBeds,
       totalSeeds: crop.seedsPerSowing * numBeds,
-      estimatedYield: calculateYield(selectedCrop, numBeds, cyclesPerYear),
+      totalSeedsForYear: crop.seedsPerSowing * numBeds * cyclesPerYear,
+      estimatedYield: `${totalYield.toLocaleString()} ${crop.yieldUnit}`,
+      yieldPerCycle: `${(crop.yieldPerBed * numBeds).toLocaleString()} ${crop.yieldUnit}`,
+      successionInterval,
       // Store as Date objects for Firebase
       sowDate: traySowDate,
-      transplantDateObj: transplantDate,
+      transplantDateObj: crop.weeksInTrays > 0 ? transplantDate : null,
       harvestDate: harvestStartDate
     });
-  };
-
-  const calculateYield = (cropName, beds, cycles) => {
-    // Simplified yield calculation
-    const yieldPerBedPerCycle = {
-      "Kale": "100 lbs",
-      "Romaine Lettuce": "360 heads",
-      "Asian Greens": "40 lbs",
-      "Swiss Chard": "600 bunches",
-      "Zucchini": "200 lbs",
-      "Tomatoes": "300 lbs",
-      "Sweet Peppers": "150 lbs"
-    };
-    
-    return yieldPerBedPerCycle[cropName] || "Variable";
   };
 
   const savePlan = async () => {
@@ -167,7 +208,6 @@ export default function CropPlanner({ userData }) {
     setSaving(true);
 
     try {
-      // Save to activities collection as crop_plan
       await addDoc(collection(db, "activities"), {
         userId: userData.userId,
         type: "crop_plan",
@@ -183,14 +223,17 @@ export default function CropPlanner({ userData }) {
           harvestDate: schedule.harvestDate,
           numBeds: schedule.numBeds,
           seedsNeeded: schedule.totalSeeds,
+          totalSeedsForYear: schedule.totalSeedsForYear,
           spacing: schedule.cropData.spacing,
           mulchRequired: schedule.cropData.mulch,
           estimatedYield: schedule.estimatedYield,
+          yieldPerCycle: schedule.yieldPerCycle,
           totalCycleWeeks: schedule.totalCycleWeeks,
-          cyclesPerYear: schedule.cyclesPerYear
+          cyclesPerYear: schedule.cyclesPerYear,
+          successionInterval: schedule.successionInterval
         },
         createdAt: new Date(),
-        expiresAt: null // Crop plans don't expire
+        expiresAt: null
       });
 
       alert("✅ Plan saved successfully! Check your dashboard.");
@@ -213,31 +256,67 @@ export default function CropPlanner({ userData }) {
       >
         <h3>Plan Your Crop</h3>
         
-        <label style={styles.label}>Select Crop</label>
+        <label style={styles.label}>Select Crop *</label>
         <select
           value={selectedCrop}
-          onChange={(e) => setSelectedCrop(e.target.value)}
-          style={styles.select}
+          onChange={(e) => {
+            setSelectedCrop(e.target.value);
+            setErrors({...errors, crop: null});
+          }}
+          style={{
+            ...styles.select,
+            borderColor: errors.crop ? "#ff4444" : "#ddd"
+          }}
         >
+          <option value="">-- Choose a crop --</option>
           {Object.keys(CROP_DATABASE).map(crop => (
             <option key={crop} value={crop}>{crop}</option>
           ))}
         </select>
+        {errors.crop && <span style={styles.error}>{errors.crop}</span>}
 
-        <label style={styles.label}>Start Date</label>
+        <label style={styles.label}>Start Date *</label>
         <input
           type="date"
           value={startDate}
-          onChange={(e) => setStartDate(e.target.value)}
-          style={styles.input}
+          onChange={(e) => {
+            setStartDate(e.target.value);
+            setErrors({...errors, date: null});
+          }}
+          style={{
+            ...styles.input,
+            borderColor: errors.date ? "#ff4444" : "#ddd"
+          }}
         />
+        {errors.date && <span style={styles.error}>{errors.date}</span>}
 
-        <label style={styles.label}>Number of Beds</label>
+        <label style={styles.label}>Number of Beds *</label>
         <input
           type="number"
           min="1"
+          max="100"
           value={numBeds}
-          onChange={(e) => setNumBeds(parseInt(e.target.value) || 1)}
+          onChange={(e) => {
+            setNumBeds(parseInt(e.target.value) || 1);
+            setErrors({...errors, beds: null});
+          }}
+          style={{
+            ...styles.input,
+            borderColor: errors.beds ? "#ff4444" : "#ddd"
+          }}
+        />
+        {errors.beds && <span style={styles.error}>{errors.beds}</span>}
+
+        <label style={styles.label}>
+          Growing Season (weeks)
+          <span style={styles.helpText}>Adjust for your climate</span>
+        </label>
+        <input
+          type="number"
+          min="12"
+          max="52"
+          value={growingSeasonWeeks}
+          onChange={(e) => setGrowingSeasonWeeks(parseInt(e.target.value) || 52)}
           style={styles.input}
         />
 
@@ -247,7 +326,7 @@ export default function CropPlanner({ userData }) {
       </motion.div>
 
       {/* Crop Info Card */}
-      {selectedCrop && (
+      {selectedCrop && CROP_DATABASE[selectedCrop] && (
         <motion.div
           initial={{ opacity: 0, x: 20 }}
           animate={{ opacity: 1, x: 0 }}
@@ -259,7 +338,8 @@ export default function CropPlanner({ userData }) {
             <InfoItem label="Harvest Window" value={`${CROP_DATABASE[selectedCrop].weeksOfHarvest} weeks`} />
             <InfoItem label="Spacing" value={CROP_DATABASE[selectedCrop].spacing} />
             <InfoItem label="Mulch Required" value={CROP_DATABASE[selectedCrop].mulch ? "Yes" : "No"} />
-            <InfoItem label="Seeds Needed" value={CROP_DATABASE[selectedCrop].seedsPerSowing} />
+            <InfoItem label="Seeds per Bed" value={CROP_DATABASE[selectedCrop].seedsPerSowing} />
+            <InfoItem label="Yield per Bed" value={`${CROP_DATABASE[selectedCrop].yieldPerBed} ${CROP_DATABASE[selectedCrop].yieldUnit}`} />
             <InfoItem label="Varieties" value={CROP_DATABASE[selectedCrop].varieties.join(", ")} />
           </div>
         </motion.div>
@@ -279,16 +359,16 @@ export default function CropPlanner({ userData }) {
               icon="🌱"
               title="Tray Sowing"
               date={schedule.traySowDate}
-              description={`Start ${schedule.totalSeeds} seeds in trays`}
+              description={`Start ${schedule.totalSeeds.toLocaleString()} seeds in trays`}
               color="#7FB34D"
             />
             
-            {schedule.cropData.weeksInTrays > 0 && (
+            {schedule.transplantDate && (
               <TimelineEvent
                 icon="🌿"
                 title="Transplant"
                 date={schedule.transplantDate}
-                description={`Move seedlings to beds (${schedule.cropData.spacing})`}
+                description={`Move seedlings to ${schedule.numBeds} bed(s) - ${schedule.cropData.spacing}`}
                 color="#5A9F6E"
               />
             )}
@@ -297,7 +377,7 @@ export default function CropPlanner({ userData }) {
               icon="🌾"
               title="Harvest Begins"
               date={schedule.harvestStartDate}
-              description={`Start harvesting - ${schedule.estimatedYield} per cycle`}
+              description={`Start harvesting - ${schedule.yieldPerCycle} expected per cycle`}
               color="#E6A93C"
             />
             
@@ -305,21 +385,36 @@ export default function CropPlanner({ userData }) {
               icon="✅"
               title="Harvest Complete"
               date={schedule.harvestEndDate}
-              description={`Cycle complete - prepare for next planting`}
+              description={`Cycle complete - clear beds and prepare for next planting`}
               color="#EFA8B8"
             />
+
+            {schedule.bedTurnoverDate && (
+              <TimelineEvent
+                icon="🔄"
+                title="Bed Ready for Replanting"
+                date={schedule.bedTurnoverDate}
+                description="Stalebed period complete, ready for next succession"
+                color="#9B59B6"
+              />
+            )}
           </div>
 
           {/* Succession Planting Info */}
           <div style={styles.successionInfo}>
-            <h4>🔄 Succession Planting</h4>
+            <h4>🔄 Succession Planting Strategy</h4>
             <p>
-              With a {schedule.totalCycleWeeks}-week cycle, you can plant {schedule.crop} approximately{" "}
-              <strong>{schedule.cyclesPerYear} times</strong> during the growing season.
+              <strong>Total cycle:</strong> {schedule.totalCycleWeeks} weeks from sowing to bed turnover
+            </p>
+            <p>
+              <strong>Possible cycles per year:</strong> {schedule.cyclesPerYear} cycles in a {growingSeasonWeeks}-week season
+            </p>
+            <p>
+              <strong>Annual yield projection:</strong> {schedule.estimatedYield} across all cycles
             </p>
             <p style={styles.tip}>
-              💡 <strong>Tip:</strong> Stagger plantings every {Math.ceil(schedule.totalCycleWeeks / 2)} weeks
-              for continuous harvest throughout the season.
+              💡 <strong>Recommended:</strong> Plant a new succession every {schedule.successionInterval} weeks
+              for continuous harvest. This will require {schedule.totalSeedsForYear.toLocaleString()} seeds total for the year.
             </p>
           </div>
 
@@ -327,11 +422,12 @@ export default function CropPlanner({ userData }) {
           <div style={styles.actionItems}>
             <h4>📝 Next Steps</h4>
             <ul style={styles.actionList}>
-              <li>Order {schedule.totalSeeds} {schedule.crop} seeds (add 20% buffer)</li>
-              <li>Prepare {schedule.numBeds} bed(s) with proper spacing</li>
-              {schedule.cropData.mulch && <li>Apply mulch to beds</li>}
-              <li>Set calendar reminder for {schedule.traySowDate}</li>
-              <li>Monitor weather forecast for planting conditions</li>
+              <li>✅ Order {Math.ceil(schedule.totalSeeds * 1.2).toLocaleString()} seeds (includes 20% buffer for this cycle)</li>
+              <li>✅ Annual seed requirement: ~{Math.ceil(schedule.totalSeedsForYear * 1.2).toLocaleString()} seeds</li>
+              <li>✅ Prepare {schedule.numBeds} bed(s) with {schedule.cropData.spacing} spacing</li>
+              {schedule.cropData.mulch && <li>✅ Apply mulch to prepared beds</li>}
+              <li>✅ Set calendar reminder for {schedule.traySowDate}</li>
+              <li>✅ Set reminders for succession plantings every {schedule.successionInterval} weeks</li>
             </ul>
           </div>
 
@@ -344,7 +440,7 @@ export default function CropPlanner({ userData }) {
             }}
             disabled={saving}
           >
-            {saving ? "Saving..." : "Save to My Planner"}
+            {saving ? "Saving..." : "💾 Save to My Planner"}
           </button>
         </motion.div>
       )}
@@ -401,13 +497,21 @@ const styles = {
     marginBottom: "0.5rem",
     color: "var(--ink-black)"
   },
+  helpText: {
+    display: "block",
+    fontSize: "0.85rem",
+    fontWeight: "400",
+    color: "#666",
+    marginTop: "0.25rem"
+  },
   select: {
     width: "100%",
     padding: "0.75rem",
     fontSize: "1rem",
     border: "1px solid #ddd",
     borderRadius: "8px",
-    boxSizing: "border-box"
+    boxSizing: "border-box",
+    transition: "border-color 0.2s"
   },
   input: {
     width: "100%",
@@ -415,7 +519,14 @@ const styles = {
     fontSize: "1rem",
     border: "1px solid #ddd",
     borderRadius: "8px",
-    boxSizing: "border-box"
+    boxSizing: "border-box",
+    transition: "border-color 0.2s"
+  },
+  error: {
+    display: "block",
+    color: "#ff4444",
+    fontSize: "0.85rem",
+    marginTop: "0.25rem"
   },
   generateButton: {
     width: "100%",
@@ -456,7 +567,8 @@ const styles = {
   },
   infoValue: {
     fontWeight: "600",
-    color: "var(--ink-black)"
+    color: "var(--ink-black)",
+    textAlign: "right"
   },
   scheduleSection: {
     gridColumn: "1 / -1",
@@ -517,15 +629,18 @@ const styles = {
   },
   tip: {
     marginTop: "1rem",
-    fontStyle: "italic",
-    color: "#666"
+    padding: "1rem",
+    background: "white",
+    borderRadius: "6px",
+    borderLeft: "4px solid var(--soil-green)"
   },
   actionItems: {
     marginTop: "2rem"
   },
   actionList: {
     marginTop: "1rem",
-    paddingLeft: "1.5rem"
+    paddingLeft: "1.5rem",
+    lineHeight: "2"
   },
   saveButton: {
     marginTop: "2rem",

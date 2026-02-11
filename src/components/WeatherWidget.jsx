@@ -1,3 +1,6 @@
+// If we'd genuinely opted for Meteo there shouldn't be a need for an API key. 
+// Unless the program requires such. 
+// There are backend functions that aren't wired here, because the logic within the helpers in the functions directory is completely different from what we see here. 
 import React, { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 

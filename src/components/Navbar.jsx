@@ -4,7 +4,6 @@ import logo from '../components/logo192.png';
 export default function Navbar() {
   const location = useLocation();
   
-  // Helper function to check if link is active
   const isActive = (path) => {
     return location.pathname === path;
   };
@@ -25,6 +24,11 @@ export default function Navbar() {
         >
           Home
         </Link>
+        <Link
+          to="/login"
+          >
+            Sign In
+          </Link>
         <Link 
           to="/about" 
           style={{
@@ -60,12 +64,11 @@ export default function Navbar() {
 const styles = {
   nav: {
     display: "flex",
-    justifyContent: "space-between",
+    flexDirection: "column", // Stack vertically on mobile
     alignItems: "center",
     padding: "1rem 2rem",
     background: "var(--soil-green)",
     color: "white",
-    flexWrap: "wrap",
     gap: "1rem"
   },
   logoLink: {
@@ -81,7 +84,8 @@ const styles = {
     display: "flex", 
     gap: "1.5rem",
     flexWrap: "wrap",
-    alignItems: "center"
+    alignItems: "center",
+    justifyContent: "center" // Center links on mobile
   },
   link: {
     color: "white",

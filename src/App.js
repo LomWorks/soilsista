@@ -5,6 +5,7 @@ import Contact from "./pages/Contact";
 import EnhancedOnboarding from "./pages/EnhancedOnboarding";
 import Dashboard from "./pages/Dashboard";
 import AdminPanel from "./pages/Adminpanel";
+import Login from "./pages/Login"
 import Navbar from "./components/Navbar";
 import "./index.css";
 
@@ -18,6 +19,7 @@ function App() {
         <Route path="/contact" element={<Contact />} />
         <Route path="/get-started" element={<EnhancedOnboarding />} />
         <Route path="/dashboard" element={<Dashboard />} />
+        <Route path="/login" element={Login} /> 
         <Route path="/admin" element={<AdminPanel />} />
       </Routes>
     </Router>

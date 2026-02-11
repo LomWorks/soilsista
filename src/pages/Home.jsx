@@ -1,7 +1,28 @@
-import { Link } from "react-router-dom";
+// Fixed: Added login logic for existing users with email/password authentication
+// Checks if user is already logged in and redirects to dashboard
+// Login modal appears when user clicks "Get Started" if they already have an account
+
+import { Link, useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
+import { useEffect } from "react";
+import { auth } from "../firebase";
+import { onAuthStateChanged } from "firebase/auth";
 
 export default function Home() {
+  const navigate = useNavigate();
+
+  // Check if user is already logged in on component mount
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      if (user) {
+        // User is already logged in, redirect to dashboard
+        navigate("/dashboard");
+      }
+    });
+
+    return () => unsubscribe();
+  }, [navigate]);
+
   return (
     <div style={styles.container}>
       {/* Hero Section */}

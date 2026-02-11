@@ -1,3 +1,5 @@
+// Fixed: Required vs optional field validation, location step added, proper error handling
+
 import React, { useState } from "react";
 import { db, auth } from "../firebase";
 import { doc, setDoc, addDoc, collection, serverTimestamp } from "firebase/firestore";
@@ -6,10 +8,12 @@ import { motion, AnimatePresence } from "framer-motion";
 import LoadingScreen from "../components/LoadingScreen";
 import VoiceInput from "../components/VoiceInput";
 import CARIBBEAN_ISLANDS from "../utils/caribbeanIslands";
+
 export default function EnhancedOnboarding() {
   const [step, setStep] = useState(0);
   const [planType, setPlanType] = useState(null); // 'free' or 'paid'
   const [loading, setLoading] = useState(false);
+  const [errors, setErrors] = useState({});
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
 
@@ -35,6 +39,90 @@ export default function EnhancedOnboarding() {
     currentIssue: ""
   });
 
+  // ===== Validation Functions =====
+  const validateEmail = (email) => {
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    return emailRegex.test(email);
+  };
+
+  const validatePassword = (password) => {
+    return password.length >= 6;
+  };
+
+  const validatePhone = (phone) => {
+    // Basic check for phone number (at least 10 digits)
+    const phoneDigits = phone.replace(/\D/g, '');
+    return phoneDigits.length >= 10;
+  };
+
+  // Check if current step in free flow is valid
+  const isFreeStepValid = (stepIndex) => {
+    switch(stepIndex) {
+      case 0: // Account Setup
+        return validateEmail(email) && validatePassword(password);
+      case 1: // Basic Info (Name)
+        return freeData.name.trim().length > 0;
+      case 2: // Location (REQUIRED)
+        return freeData.location.island.trim().length > 0 && 
+               freeData.location.settlement.trim().length > 0;
+      case 3: // Farm Size
+        return freeData.farmSize.trim().length > 0;
+      case 4: // Farming Type (optional)
+        return true; // Optional
+      case 5: // Crops Info (optional)
+        return true; // Optional
+      case 6: // Pest Control (optional)
+        return true; // Optional
+      case 7: // Diseases Info (optional)
+        return true; // Optional
+      default:
+        return true;
+    }
+  };
+
+  // Check if paid form is valid
+  const isPaidFormValid = () => {
+    return validateEmail(email) &&
+           validatePassword(password) &&
+           paidData.name.trim().length > 0 &&
+           paidData.island.trim().length > 0 &&
+           paidData.settlement.trim().length > 0 &&
+           validatePhone(paidData.phone);
+  };
+
+  // Handle next button with validation
+  const handleNextStep = () => {
+    const newErrors = {};
+
+    // Validate current step
+    if (step === 0) {
+      if (!validateEmail(email)) {
+        newErrors.email = "Please enter a valid email address";
+      }
+      if (!validatePassword(password)) {
+        newErrors.password = "Password must be at least 6 characters";
+      }
+    } else if (step === 1 && !freeData.name.trim()) {
+      newErrors.name = "Name is required";
+    } else if (step === 2) {
+      if (!freeData.location.island.trim()) {
+        newErrors.island = "Please select your island";
+      }
+      if (!freeData.location.settlement.trim()) {
+        newErrors.settlement = "Settlement/area is required";
+      }
+    } else if (step === 3 && !freeData.farmSize.trim()) {
+      newErrors.farmSize = "Farm size is required";
+    }
+
+    setErrors(newErrors);
+
+    // Only proceed if no errors
+    if (Object.keys(newErrors).length === 0) {
+      setStep(step + 1);
+    }
+  };
+
   // ===== Helper: Create Firebase User =====
   const createFirebaseUser = async () => {
     if (!email || !password) throw new Error("Please provide email and password");
@@ -44,6 +132,12 @@ export default function EnhancedOnboarding() {
 
   // ===== Submit Free Version =====
   const submitFreeVersion = async () => {
+    // Final validation check
+    if (!isFreeStepValid(0) || !isFreeStepValid(1) || !isFreeStepValid(2) || !isFreeStepValid(3)) {
+      alert("Please complete all required fields");
+      return;
+    }
+
     try {
       setLoading(true);
       const userId = await createFirebaseUser();
@@ -94,6 +188,34 @@ export default function EnhancedOnboarding() {
 
   // ===== Submit Paid Version =====
   const submitPaidVersion = async () => {
+    // Validate paid form
+    const newErrors = {};
+    
+    if (!validateEmail(email)) {
+      newErrors.email = "Please enter a valid email address";
+    }
+    if (!validatePassword(password)) {
+      newErrors.password = "Password must be at least 6 characters";
+    }
+    if (!paidData.name.trim()) {
+      newErrors.name = "Name is required";
+    }
+    if (!paidData.island.trim()) {
+      newErrors.island = "Please select your island";
+    }
+    if (!paidData.settlement.trim()) {
+      newErrors.settlement = "Settlement/area is required";
+    }
+    if (!validatePhone(paidData.phone)) {
+      newErrors.phone = "Please enter a valid phone number (at least 10 digits)";
+    }
+
+    setErrors(newErrors);
+
+    if (Object.keys(newErrors).length > 0) {
+      return;
+    }
+
     try {
       setLoading(true);
       const userId = await createFirebaseUser();
@@ -146,50 +268,124 @@ export default function EnhancedOnboarding() {
 
   // ===== Step Components =====
   const freeSteps = [
-    <AccountSetup email={email} setEmail={setEmail} password={password} setPassword={setPassword} key={0} />, 
-    <BasicInfo data={freeData} setData={setFreeData} key={1} />,
-    <FarmSize data={freeData} setData={setFreeData} key={2} />,
-    <FarmingType data={freeData} setData={setFreeData} key={3} />,
-    <CropsInfo data={freeData} setData={setFreeData} key={4} />,
-    <PestControl data={freeData} setData={setFreeData} key={5} />,
-    <DiseasesInfo data={freeData} setData={setFreeData} key={6} />
+    <AccountSetup 
+      email={email} 
+      setEmail={setEmail} 
+      password={password} 
+      setPassword={setPassword} 
+      errors={errors}
+      key={0} 
+    />,
+    <BasicInfo 
+      data={freeData} 
+      setData={setFreeData} 
+      errors={errors}
+      key={1} 
+    />,
+    <LocationInfo 
+      data={freeData} 
+      setData={setFreeData} 
+      errors={errors}
+      key={2} 
+    />,
+    <FarmSize 
+      data={freeData} 
+      setData={setFreeData} 
+      errors={errors}
+      key={3} 
+    />,
+    <FarmingType 
+      data={freeData} 
+      setData={setFreeData} 
+      key={4} 
+    />,
+    <CropsInfo 
+      data={freeData} 
+      setData={setFreeData} 
+      key={5} 
+    />,
+    <PestControl 
+      data={freeData} 
+      setData={setFreeData} 
+      key={6} 
+    />,
+    <DiseasesInfo 
+      data={freeData} 
+      setData={setFreeData} 
+      key={7} 
+    />
   ];
 
   // ===== Render =====
   if (planType === null) return <PlanSelection setPlanType={setPlanType} />;
 
-  if (planType === "free") return (
-    <div style={styles.page}>
-      <ProgressBar current={step} total={freeSteps.length} />
-      <AnimatePresence mode="wait">
-        <motion.div
-          key={step}
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
-          transition={{ duration: 0.3 }}
-          style={styles.formContainer}
-        >
-          {freeSteps[step]}
-        </motion.div>
-      </AnimatePresence>
+  if (planType === "free") {
+    const canProceed = isFreeStepValid(step);
+    
+    return (
+      <div style={styles.page}>
+        <ProgressBar current={step} total={freeSteps.length} />
+        <AnimatePresence mode="wait">
+          <motion.div
+            key={step}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.3 }}
+            style={styles.formContainer}
+          >
+            {freeSteps[step]}
+          </motion.div>
+        </AnimatePresence>
 
-      <div style={styles.navigation}>
-        {step > 0 && <button onClick={() => setStep(step - 1)} style={styles.backButton}>← Back</button>}
-        {step < freeSteps.length - 1 ? 
-          <button onClick={() => setStep(step + 1)} style={styles.nextButton}>Next →</button> :
-          <button onClick={submitFreeVersion} style={styles.submitButton}>Complete Setup</button>
-        }
+        <div style={styles.navigation}>
+          {step > 0 && (
+            <button 
+              onClick={() => setStep(step - 1)} 
+              style={styles.backButton}
+            >
+              ← Back
+            </button>
+          )}
+          {step < freeSteps.length - 1 ? (
+            <button 
+              onClick={handleNextStep}
+              disabled={!canProceed}
+              style={{
+                ...styles.nextButton,
+                ...(canProceed ? {} : styles.disabledButton)
+              }}
+            >
+              Next →
+            </button>
+          ) : (
+            <button 
+              onClick={submitFreeVersion}
+              disabled={!canProceed}
+              style={{
+                ...styles.submitButton,
+                ...(canProceed ? {} : styles.disabledButton)
+              }}
+            >
+              Complete Setup
+            </button>
+          )}
+        </div>
       </div>
-    </div>
-  );
+    );
+  }
 
   if (planType === "paid") return (
     <PaidForm
-      email={email} setEmail={setEmail}
-      password={password} setPassword={setPassword}
-      data={paidData} setData={setPaidData}
+      email={email} 
+      setEmail={setEmail}
+      password={password} 
+      setPassword={setPassword}
+      data={paidData} 
+      setData={setPaidData}
       submit={submitPaidVersion}
+      errors={errors}
+      isValid={isPaidFormValid()}
     />
   );
 
@@ -235,42 +431,113 @@ function PlanSelection({ setPlanType }) {
 }
 
 // ===== Components: Paid Form =====
-function PaidForm({ email, setEmail, password, setPassword, data, setData, submit }) {
+function PaidForm({ email, setEmail, password, setPassword, data, setData, submit, errors, isValid }) {
   return (
     <div style={styles.page}>
       <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.5 }} style={styles.quickForm}>
         <h1>Quick Setup (60 seconds)</h1>
         <p style={styles.subtitle}>We'll gather more details through WhatsApp</p>
-        <label style={styles.label}>Email</label>
-        <input type="email" placeholder="your@email.com" value={email} onChange={e => setEmail(e.target.value)} style={styles.input} />
+        
+        <label style={styles.label}>Email <span style={styles.required}>*</span></label>
+        <input 
+          type="email" 
+          placeholder="your@email.com" 
+          value={email} 
+          onChange={e => setEmail(e.target.value)} 
+          style={{
+            ...styles.input,
+            ...(errors.email ? styles.inputError : {})
+          }}
+        />
+        {errors.email && <p style={styles.errorText}>{errors.email}</p>}
 
-        <label style={styles.label}>Password</label>
-        <input type="password" placeholder="Create a password" value={password} onChange={e => setPassword(e.target.value)} style={styles.input} />
+        <label style={styles.label}>Password <span style={styles.required}>*</span></label>
+        <input 
+          type="password" 
+          placeholder="At least 6 characters" 
+          value={password} 
+          onChange={e => setPassword(e.target.value)} 
+          style={{
+            ...styles.input,
+            ...(errors.password ? styles.inputError : {})
+          }}
+        />
+        {errors.password && <p style={styles.errorText}>{errors.password}</p>}
 
-        <label style={styles.label}>Your Name</label>
-        <input placeholder="Full name" value={data.name} onChange={e => setData({ ...data, name: e.target.value })} style={styles.input} />
+        <label style={styles.label}>Your Name <span style={styles.required}>*</span></label>
+        <input 
+          placeholder="Full name" 
+          value={data.name} 
+          onChange={e => setData({ ...data, name: e.target.value })} 
+          style={{
+            ...styles.input,
+            ...(errors.name ? styles.inputError : {})
+          }}
+        />
+        {errors.name && <p style={styles.errorText}>{errors.name}</p>}
 
-        <label style={styles.label}>Island</label>
-           <select value={data.island} onChange={e => setData({ ...data, island: e.target.value })} style={styles.input}>
-             <option value="">Select island</option>
-             {CARIBBEAN_ISLANDS.map(island => (
-  <option key={island} value={island}>{island}</option>
-))}
+        <label style={styles.label}>Island <span style={styles.required}>*</span></label>
+        <select 
+          value={data.island} 
+          onChange={e => setData({ ...data, island: e.target.value })} 
+          style={{
+            ...styles.input,
+            ...(errors.island ? styles.inputError : {})
+          }}
+        >
+          <option value="">Select island</option>
+          {CARIBBEAN_ISLANDS.map(island => (
+            <option key={island} value={island}>{island}</option>
+          ))}
+        </select>
+        {errors.island && <p style={styles.errorText}>{errors.island}</p>}
 
-             </select>
+        <label style={styles.label}>Settlement/Area <span style={styles.required}>*</span></label>
+        <input 
+          placeholder="e.g., St. John's, Codrington" 
+          value={data.settlement} 
+          onChange={e => setData({ ...data, settlement: e.target.value })} 
+          style={{
+            ...styles.input,
+            ...(errors.settlement ? styles.inputError : {})
+          }}
+        />
+        {errors.settlement && <p style={styles.errorText}>{errors.settlement}</p>}
 
-        <label style={styles.label}>Settlement/Area</label>
-        <input placeholder="e.g., St. John's, Codrington" value={data.settlement} onChange={e => setData({ ...data, settlement: e.target.value })} style={styles.input} />
+        <label style={styles.label}>WhatsApp Phone Number <span style={styles.required}>*</span></label>
+        <input 
+          type="tel" 
+          placeholder="+1 268 XXX XXXX" 
+          value={data.phone} 
+          onChange={e => setData({ ...data, phone: e.target.value })} 
+          style={{
+            ...styles.input,
+            ...(errors.phone ? styles.inputError : {})
+          }}
+        />
+        {errors.phone && <p style={styles.errorText}>{errors.phone}</p>}
 
-        <label style={styles.label}>WhatsApp Phone Number</label>
-        <input type="tel" placeholder="+1 242 XXX XXXX" value={data.phone} onChange={e => setData({ ...data, phone: e.target.value })} style={styles.input} />
-
-        <label style={styles.label}>Current Issue (Optional)</label>
-        <textarea placeholder="Brief description of what you need help with..." value={data.currentIssue} onChange={e => setData({ ...data, currentIssue: e.target.value })} rows={3} style={styles.textarea} />
+        <label style={styles.label}>Current Issue <span style={styles.optional}>(Optional)</span></label>
+        <textarea 
+          placeholder="Brief description of what you need help with..." 
+          value={data.currentIssue} 
+          onChange={e => setData({ ...data, currentIssue: e.target.value })} 
+          rows={3} 
+          style={styles.textarea} 
+        />
 
         <VoiceInput setText={(text) => setData(prev => ({ ...prev, currentIssue: prev.currentIssue + ' ' + text }))} />
 
-        <button onClick={submit} style={styles.submitButton}>Complete Setup</button>
+        <button 
+          onClick={submit}
+          disabled={!isValid}
+          style={{
+            ...styles.submitButton,
+            ...(isValid ? {} : styles.disabledButton)
+          }}
+        >
+          Complete Setup
+        </button>
         <p style={styles.disclaimer}>💬 You'll receive a WhatsApp message within 24 hours to begin your consultation</p>
       </motion.div>
     </div>
@@ -282,9 +549,203 @@ function ProgressBar({ current, total }) {
   return (
     <div style={styles.progressContainer}>
       <div style={styles.progressBar}>
-        <motion.div initial={{ width: 0 }} animate={{ width: `${((current + 1) / total) * 100}%` }} transition={{ duration: 0.3 }} style={styles.progressFill} />
+        <motion.div 
+          initial={{ width: 0 }} 
+          animate={{ width: `${((current + 1) / total) * 100}%` }} 
+          transition={{ duration: 0.3 }} 
+          style={styles.progressFill} 
+        />
       </div>
       <p style={styles.progressText}>Step {current + 1} of {total}</p>
+    </div>
+  );
+}
+
+// ===== Step Components =====
+function AccountSetup({ email, setEmail, password, setPassword, errors }) {
+  return (
+    <div style={styles.stepContent}>
+      <h2>Create Your Account</h2>
+      <p style={styles.stepDescription}>We'll use this to save your farm data securely</p>
+      
+      <label style={styles.label}>Email <span style={styles.required}>*</span></label>
+      <input
+        type="email"
+        placeholder="your@email.com"
+        value={email}
+        onChange={e => setEmail(e.target.value)}
+        style={{
+          ...styles.input,
+          ...(errors.email ? styles.inputError : {})
+        }}
+      />
+      {errors.email && <p style={styles.errorText}>{errors.email}</p>}
+
+      <label style={styles.label}>Password <span style={styles.required}>*</span></label>
+      <input
+        type="password"
+        placeholder="At least 6 characters"
+        value={password}
+        onChange={e => setPassword(e.target.value)}
+        style={{
+          ...styles.input,
+          ...(errors.password ? styles.inputError : {})
+        }}
+      />
+      {errors.password && <p style={styles.errorText}>{errors.password}</p>}
+    </div>
+  );
+}
+
+function BasicInfo({ data, setData, errors }) {
+  return (
+    <div style={styles.stepContent}>
+      <h2>What's your name?</h2>
+      <p style={styles.stepDescription}>So we know what to call you</p>
+      
+      <label style={styles.label}>Your Name <span style={styles.required}>*</span></label>
+      <input
+        placeholder="Full name"
+        value={data.name}
+        onChange={e => setData({ ...data, name: e.target.value })}
+        style={{
+          ...styles.input,
+          ...(errors.name ? styles.inputError : {})
+        }}
+      />
+      {errors.name && <p style={styles.errorText}>{errors.name}</p>}
+    </div>
+  );
+}
+
+function LocationInfo({ data, setData, errors }) {
+  return (
+    <div style={styles.stepContent}>
+      <h2>Where's your farm?</h2>
+      <p style={styles.stepDescription}>This helps us provide accurate weather data and local recommendations</p>
+      
+      <label style={styles.label}>Island <span style={styles.required}>*</span></label>
+      <select 
+        value={data.location.island} 
+        onChange={e => setData({ ...data, location: { ...data.location, island: e.target.value } })} 
+        style={{
+          ...styles.input,
+          ...(errors.island ? styles.inputError : {})
+        }}
+      >
+        <option value="">Select your island</option>
+        {CARIBBEAN_ISLANDS.map(island => (
+          <option key={island} value={island}>{island}</option>
+        ))}
+      </select>
+      {errors.island && <p style={styles.errorText}>{errors.island}</p>}
+
+      <label style={styles.label}>Settlement/Area <span style={styles.required}>*</span></label>
+      <input
+        placeholder="e.g., St. John's, All Saints, Parham"
+        value={data.location.settlement}
+        onChange={e => setData({ ...data, location: { ...data.location, settlement: e.target.value } })}
+        style={{
+          ...styles.input,
+          ...(errors.settlement ? styles.inputError : {})
+        }}
+      />
+      {errors.settlement && <p style={styles.errorText}>{errors.settlement}</p>}
+    </div>
+  );
+}
+
+function FarmSize({ data, setData, errors }) {
+  return (
+    <div style={styles.stepContent}>
+      <h2>How big is your farm?</h2>
+      <p style={styles.stepDescription}>This helps us calculate planting needs</p>
+      
+      <label style={styles.label}>Farm Size <span style={styles.required}>*</span></label>
+      <input
+        placeholder="e.g., 2 acres, 0.5 hectares, 5000 sq ft"
+        value={data.farmSize}
+        onChange={e => setData({ ...data, farmSize: e.target.value })}
+        style={{
+          ...styles.input,
+          ...(errors.farmSize ? styles.inputError : {})
+        }}
+      />
+      {errors.farmSize && <p style={styles.errorText}>{errors.farmSize}</p>}
+    </div>
+  );
+}
+
+function FarmingType({ data, setData }) {
+  return (
+    <div style={styles.stepContent}>
+      <h2>What type of farming do you do?</h2>
+      <p style={styles.stepDescription}>Optional - helps us customize your experience</p>
+      
+      <label style={styles.label}>Farming Type <span style={styles.optional}>(Optional)</span></label>
+      <input
+        placeholder="e.g., Crop farming, Mixed farming, Livestock"
+        value={data.farmingType}
+        onChange={e => setData({ ...data, farmingType: e.target.value })}
+        style={styles.input}
+      />
+    </div>
+  );
+}
+
+function CropsInfo({ data, setData }) {
+  return (
+    <div style={styles.stepContent}>
+      <h2>What crops are you growing?</h2>
+      <p style={styles.stepDescription}>Optional - separate multiple crops with commas</p>
+      
+      <label style={styles.label}>Current Crops <span style={styles.optional}>(Optional)</span></label>
+      <input
+        placeholder="e.g., Tomatoes, Peppers, Lettuce"
+        value={data.crops.join(", ")}
+        onChange={e =>
+          setData({ ...data, crops: e.target.value.split(",").map(c => c.trim()).filter(c => c) })
+        }
+        style={styles.input}
+      />
+    </div>
+  );
+}
+
+function PestControl({ data, setData }) {
+  return (
+    <div style={styles.stepContent}>
+      <h2>How do you handle pests?</h2>
+      <p style={styles.stepDescription}>Optional - helps us give better recommendations</p>
+      
+      <label style={styles.label}>Pest Control Methods <span style={styles.optional}>(Optional)</span></label>
+      <input
+        placeholder="e.g., Neem oil, Traps, Companion planting"
+        value={data.pestControl.join(", ")}
+        onChange={e =>
+          setData({ ...data, pestControl: e.target.value.split(",").map(p => p.trim()).filter(p => p) })
+        }
+        style={styles.input}
+      />
+    </div>
+  );
+}
+
+function DiseasesInfo({ data, setData }) {
+  return (
+    <div style={styles.stepContent}>
+      <h2>Any known plant diseases?</h2>
+      <p style={styles.stepDescription}>Optional - helps us provide preventive tips</p>
+      
+      <label style={styles.label}>Known Diseases <span style={styles.optional}>(Optional)</span></label>
+      <input
+        placeholder="e.g., Blight, Rust, Powdery mildew, or 'None'"
+        value={data.diseases.join(", ")}
+        onChange={e =>
+          setData({ ...data, diseases: e.target.value.split(",").map(d => d.trim()).filter(d => d) })
+        }
+        style={styles.input}
+      />
     </div>
   );
 }
@@ -395,16 +856,26 @@ const styles = {
   stepContent: {
     display: "flex",
     flexDirection: "column",
-    gap: "1rem"
+    gap: "0.5rem"
+  },
+  stepDescription: {
+    color: "#666",
+    fontSize: "0.95rem",
+    marginBottom: "1rem"
   },
   label: {
     fontWeight: "600",
     color: "var(--ink-black)",
     marginTop: "1rem"
   },
-  smallLabel: {
-    fontSize: "0.9rem",
-    marginRight: "0.5rem"
+  required: {
+    color: "#ef4444",
+    fontWeight: "bold"
+  },
+  optional: {
+    color: "#999",
+    fontSize: "0.85rem",
+    fontWeight: "normal"
   },
   input: {
     width: "100%",
@@ -412,7 +883,18 @@ const styles = {
     fontSize: "1rem",
     border: "1px solid #ddd",
     borderRadius: "8px",
-    boxSizing: "border-box"
+    boxSizing: "border-box",
+    transition: "border-color 0.2s"
+  },
+  inputError: {
+    borderColor: "#ef4444",
+    background: "#fef2f2"
+  },
+  errorText: {
+    color: "#ef4444",
+    fontSize: "0.85rem",
+    marginTop: "0.25rem",
+    marginBottom: "0.5rem"
   },
   textarea: {
     width: "100%",
@@ -423,165 +905,6 @@ const styles = {
     boxSizing: "border-box",
     fontFamily: "inherit",
     resize: "vertical"
-  },
-  locationGrid: {
-    display: "grid",
-    gridTemplateColumns: "1fr 1fr",
-    gap: "1rem"
-  },
-  buttonGrid: {
-    display: "grid",
-    gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))",
-    gap: "0.75rem"
-  },
-  optionButton: {
-    padding: "0.75rem",
-    background: "white",
-    border: "2px solid #ddd",
-    borderRadius: "8px",
-    cursor: "pointer",
-    transition: "all 0.2s",
-    fontSize: "0.9rem"
-  },
-  optionButtonActive: {
-    background: "var(--soil-green)",
-    color: "white",
-    borderColor: "var(--soil-green)"
-  },
-  cardGrid: {
-    display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
-    gap: "1rem"
-  },
-  selectionCard: {
-    padding: "1.5rem",
-    background: "white",
-    border: "2px solid #ddd",
-    borderRadius: "12px",
-    cursor: "pointer",
-    transition: "all 0.2s",
-    textAlign: "center"
-  },
-  selectionCardActive: {
-    borderColor: "var(--soil-green)",
-    background: "#f0f9f4"
-  },
-  cardEmoji: {
-    fontSize: "3rem",
-    marginBottom: "0.5rem"
-  },
-  cardDescription: {
-    fontSize: "0.85rem",
-    color: "#666",
-    marginTop: "0.5rem"
-  },
-  addItemContainer: {
-    display: "flex",
-    gap: "0.5rem"
-  },
-  addButton: {
-    padding: "0.75rem 1.5rem",
-    background: "var(--soil-green)",
-    color: "white",
-    border: "none",
-    borderRadius: "8px",
-    cursor: "pointer",
-    whiteSpace: "nowrap",
-    fontWeight: "600"
-  },
-  tagContainer: {
-    display: "flex",
-    flexWrap: "wrap",
-    gap: "0.5rem",
-    marginTop: "1rem"
-  },
-  tag: {
-    background: "var(--soil-green)",
-    color: "white",
-    padding: "0.5rem 1rem",
-    borderRadius: "20px",
-    display: "flex",
-    alignItems: "center",
-    gap: "0.5rem",
-    fontSize: "0.9rem"
-  },
-  removeTag: {
-    cursor: "pointer",
-    fontWeight: "bold",
-    fontSize: "1.2rem"
-  },
-  quickAddButton: {
-    padding: "0.5rem 1rem",
-    background: "#f0f0f0",
-    border: "1px solid #ddd",
-    borderRadius: "6px",
-    cursor: "pointer",
-    fontSize: "0.85rem",
-    transition: "all 0.2s"
-  },
-  diseaseForm: {
-    background: "#f9f9f9",
-    padding: "1rem",
-    borderRadius: "8px",
-    marginTop: "1rem"
-  },
-  severitySelector: {
-    display: "flex",
-    alignItems: "center",
-    gap: "0.5rem",
-    marginBottom: "1rem"
-  },
-  severityButton: {
-    padding: "0.4rem 1rem",
-    background: "white",
-    border: "1px solid #ddd",
-    borderRadius: "6px",
-    cursor: "pointer",
-    fontSize: "0.85rem"
-  },
-  severityButtonActive: {
-    background: "var(--soil-green)",
-    color: "white",
-    borderColor: "var(--soil-green)"
-  },
-  diseaseList: {
-    marginTop: "1.5rem"
-  },
-  listTitle: {
-    fontSize: "1rem",
-    marginBottom: "1rem"
-  },
-  diseaseItem: {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center",
-    padding: "0.75rem",
-    background: "#f9f9f9",
-    borderRadius: "8px",
-    marginBottom: "0.5rem"
-  },
-  severityBadge: {
-    marginLeft: "0.5rem",
-    padding: "0.2rem 0.6rem",
-    borderRadius: "12px",
-    fontSize: "0.75rem",
-    color: "white",
-    fontWeight: "bold"
-  },
-  removeButton: {
-    padding: "0.4rem 0.8rem",
-    background: "#ef4444",
-    color: "white",
-    border: "none",
-    borderRadius: "6px",
-    cursor: "pointer",
-    fontSize: "0.8rem"
-  },
-  helperText: {
-    fontSize: "0.85rem",
-    color: "#666",
-    fontStyle: "italic",
-    marginTop: "1rem"
   },
   navigation: {
     display: "flex",
@@ -610,7 +933,8 @@ const styles = {
     cursor: "pointer",
     fontWeight: "600",
     fontSize: "1rem",
-    flex: 1
+    flex: 1,
+    transition: "all 0.2s"
   },
   submitButton: {
     padding: "1rem 2rem",
@@ -621,7 +945,12 @@ const styles = {
     cursor: "pointer",
     fontWeight: "600",
     fontSize: "1rem",
-    flex: 1
+    flex: 1,
+    transition: "all 0.2s"
+  },
+  disabledButton: {
+    opacity: 0.5,
+    cursor: "not-allowed"
   },
   quickForm: {
     maxWidth: "500px",
@@ -638,114 +967,3 @@ const styles = {
     marginTop: "1rem"
   }
 };
-
-function AccountSetup({ email, setEmail, password, setPassword }) {
-  return (
-    <div style={styles.stepContent}>
-      <label style={styles.label}>Email</label>
-      <input
-        type="email"
-        value={email}
-        onChange={e => setEmail(e.target.value)}
-        style={styles.input}
-      />
-
-      <label style={styles.label}>Password</label>
-      <input
-        type="password"
-        value={password}
-        onChange={e => setPassword(e.target.value)}
-        style={styles.input}
-      />
-    </div>
-  );
-}
-
-function BasicInfo({ data, setData }) {
-  return (
-    <div style={styles.stepContent}>
-      <label style={styles.label}>Your Name</label>
-      <input
-        value={data.name}
-        onChange={e => setData({ ...data, name: e.target.value })}
-        style={styles.input}
-      />
-    </div>
-  );
-}
-
-function FarmSize({ data, setData }) {
-  return (
-    <div style={styles.stepContent}>
-      <label style={styles.label}>Farm Size</label>
-      <input
-        placeholder="e.g. 2 acres"
-        value={data.farmSize}
-        onChange={e => setData({ ...data, farmSize: e.target.value })}
-        style={styles.input}
-      />
-    </div>
-  );
-}
-
-function FarmingType({ data, setData }) {
-  return (
-    <div style={styles.stepContent}>
-      <label style={styles.label}>Farming Type</label>
-      <input
-        placeholder="Crop / Mixed / Livestock"
-        value={data.farmingType}
-        onChange={e => setData({ ...data, farmingType: e.target.value })}
-        style={styles.input}
-      />
-    </div>
-  );
-}
-
-function CropsInfo({ data, setData }) {
-  return (
-    <div style={styles.stepContent}>
-      <label style={styles.label}>Current Crops (comma separated)</label>
-      <input
-        placeholder="Tomatoes, Peppers"
-        value={data.crops.join(", ")}
-        onChange={e =>
-          setData({ ...data, crops: e.target.value.split(",").map(c => c.trim()) })
-        }
-        style={styles.input}
-      />
-    </div>
-  );
-}
-
-function PestControl({ data, setData }) {
-  return (
-    <div style={styles.stepContent}>
-      <label style={styles.label}>Pest Control Methods</label>
-      <input
-        placeholder="Neem oil, traps, none"
-        value={data.pestControl.join(", ")}
-        onChange={e =>
-          setData({ ...data, pestControl: e.target.value.split(",").map(p => p.trim()) })
-        }
-        style={styles.input}
-      />
-    </div>
-  );
-}
-
-function DiseasesInfo({ data, setData }) {
-  return (
-    <div style={styles.stepContent}>
-      <label style={styles.label}>Known Diseases</label>
-      <input
-        placeholder="Blight, rust, none"
-        value={data.diseases.join(", ")}
-        onChange={e =>
-          setData({ ...data, diseases: e.target.value.split(",").map(d => d.trim()) })
-        }
-        style={styles.input}
-      />
-    </div>
-  );
-}
