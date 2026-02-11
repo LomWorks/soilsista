@@ -19,7 +19,7 @@ function App() {
         <Route path="/contact" element={<Contact />} />
         <Route path="/get-started" element={<EnhancedOnboarding />} />
         <Route path="/dashboard" element={<Dashboard />} />
-        <Route path="/login" element={Login} /> 
+        <Route path="/login" element={<Login />} /> 
         <Route path="/admin" element={<AdminPanel />} />
       </Routes>
     </Router>
