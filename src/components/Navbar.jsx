@@ -26,6 +26,10 @@ export default function Navbar() {
         </Link>
         <Link
           to="/login"
+          style={{
+            ...styles.link,
+            ...(isActive('/about') ? styles.linkActive : {})
+          }}
           >
             Sign In
           </Link>

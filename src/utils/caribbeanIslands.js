@@ -1,39 +1,30 @@
 const CARIBBEAN_ISLANDS = [
-  // Antigua & Barbuda
   "Antigua",
-  "Barbuda",
-
-  // Bahamas
-  "New Providence (Nassau)",
-  "Grand Bahama (Freeport)",
   "Abaco",
+  "Andros",
+  "Anguilla",
+  "Aruba",
+  "Barbuda",
+  "Barbados",
+  "Bonaire",
+  "Curacao",
+  "Dominica",
+  "Dominican Republic",
   "Eleuthera",
   "Exuma",
-  "Andros",
-
-  // Eastern Caribbean
-  "Saint Lucia",
-  "Dominica",
-  "Saint Vincent",
   "Grenada",
-  "Barbados",
-
-  // Greater Antilles
-  "Jamaica",
-  "Puerto Rico",
+  "Grand Bahama (Freeport)",
   "Haiti",
-  "Dominican Republic",
-
-  // Others
+  "Jamaica",
   "Montserrat",
-  "Saint Kitts",
   "Nevis",
-  "Anguilla",
+  "New Providence (Nassau)",
+  "Puerto Rico",
+  "Saint Lucia",
+  "Saint Vincent",
+  "Saint Kitts",
   "Trinidad",
   "Tobago",
-  "Aruba",
-  "Curacao",
-  "Bonaire"
 ];
 
 export default CARIBBEAN_ISLANDS;
