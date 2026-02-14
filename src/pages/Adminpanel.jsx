@@ -398,15 +398,16 @@ export default function AdminPanel() {
       {/* Tab Content */}
       <div style={styles.content}>
         <AnimatePresence mode="wait">
-          {activeTab === "overview" && (
-            <OverviewTab 
-              users={users}
-              notifications={adminNotifications}
-              contactMessages={contactMessages}
-              activities={activities}
-              stats={stats}
-            />
-          )}
+         {activeTab === "overview" && (
+  <OverviewTab 
+    users={users}
+    notifications={adminNotifications}
+    contactMessages={contactMessages}
+    activities={activities}
+    stats={stats}
+    setActiveTab={setActiveTab}
+  />
+)}
 
           {activeTab === "contact_messages" && (
             <ContactMessagesTab 
@@ -632,7 +633,14 @@ function ContactMessagesTab({ messages, onMarkAsRead, onMarkAsUnread, onDelete }
 }
 
 // Overview Tab
-function OverviewTab({ users, notifications, contactMessages, activities, stats }) {
+function OverviewTab({ 
+  users, 
+  notifications, 
+  contactMessages, 
+  activities, 
+  stats,
+  setActiveTab 
+}) {
   const recentUsers = users.slice(0, 5);
   const urgentNotifications = notifications.filter(n => 
     n.status === "unread" && n.priority === "high"

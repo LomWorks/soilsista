@@ -76,8 +76,8 @@ const styles = {
     alignItems: "center"
   },
   logo: {
-    height: "40px",
-    width: "40px",
+    height: "5rem",
+    width: "5rem",
     objectFit: "contain"
   },
   links: { 
