@@ -17,6 +17,7 @@ export default function EnhancedOnboarding() {
   const [errors, setErrors] = useState({});
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
 
   const [freeData, setFreeData] = useState({
     name: "",
@@ -50,6 +51,10 @@ export default function EnhancedOnboarding() {
     return password.length >= 6;
   };
 
+  const validatePasswordMatch = () => {
+    return password === confirmPassword && password.length >= 6;
+  };
+
   const validatePhone = (phone) => {
     // Basic check for phone number (at least 10 digits)
     const phoneDigits = phone.replace(/\D/g, '');
@@ -60,7 +65,7 @@ export default function EnhancedOnboarding() {
   const isFreeStepValid = (stepIndex) => {
     switch(stepIndex) {
       case 0: // Account Setup
-        return validateEmail(email) && validatePassword(password);
+        return validateEmail(email) && validatePasswordMatch();
       case 1: // Basic Info (Name)
         return freeData.name.trim().length > 0;
       case 2: // Location (REQUIRED)
@@ -84,7 +89,7 @@ export default function EnhancedOnboarding() {
   // Check if paid form is valid
   const isPaidFormValid = () => {
     return validateEmail(email) &&
-           validatePassword(password) &&
+           validatePasswordMatch() &&
            paidData.name.trim().length > 0 &&
            paidData.island.trim().length > 0 &&
            paidData.settlement.trim().length > 0 &&
@@ -102,6 +107,9 @@ export default function EnhancedOnboarding() {
       }
       if (!validatePassword(password)) {
         newErrors.password = "Password must be at least 6 characters";
+      }
+      if (password !== confirmPassword) {
+        newErrors.confirmPassword = "Passwords do not match";
       }
     } else if (step === 1 && !freeData.name.trim()) {
       newErrors.name = "Name is required";
@@ -198,6 +206,9 @@ export default function EnhancedOnboarding() {
     if (!validatePassword(password)) {
       newErrors.password = "Password must be at least 6 characters";
     }
+    if (password !== confirmPassword) {
+      newErrors.confirmPassword = "Passwords do not match";
+    }
     if (!paidData.name.trim()) {
       newErrors.name = "Name is required";
     }
@@ -273,7 +284,9 @@ export default function EnhancedOnboarding() {
       email={email} 
       setEmail={setEmail} 
       password={password} 
-      setPassword={setPassword} 
+      setPassword={setPassword}
+      confirmPassword={confirmPassword}
+      setConfirmPassword={setConfirmPassword}
       errors={errors}
       key={0} 
     />,
@@ -382,6 +395,8 @@ export default function EnhancedOnboarding() {
       setEmail={setEmail}
       password={password} 
       setPassword={setPassword}
+      confirmPassword={confirmPassword}
+      setConfirmPassword={setConfirmPassword}
       data={paidData} 
       setData={setPaidData}
       submit={submitPaidVersion}
@@ -432,7 +447,7 @@ function PlanSelection({ setPlanType }) {
 }
 
 // ===== Components: Paid Form =====
-function PaidForm({ email, setEmail, password, setPassword, data, setData, submit, errors, isValid }) {
+function PaidForm({ email, setEmail, password, setPassword, confirmPassword, setConfirmPassword, data, setData, submit, errors, isValid }) {
   return (
     <div style={styles.page}>
       <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.5 }} style={styles.quickForm}>
@@ -464,6 +479,19 @@ function PaidForm({ email, setEmail, password, setPassword, data, setData, submi
           }}
         />
         {errors.password && <p style={styles.errorText}>{errors.password}</p>}
+
+        <label style={styles.label}>Confirm Password <span style={styles.required}>*</span></label>
+        <input 
+          type="password" 
+          placeholder="Re-enter your password" 
+          value={confirmPassword} 
+          onChange={e => setConfirmPassword(e.target.value)} 
+          style={{
+            ...styles.input,
+            ...(errors.confirmPassword ? styles.inputError : {})
+          }}
+        />
+        {errors.confirmPassword && <p style={styles.errorText}>{errors.confirmPassword}</p>}
 
         <label style={styles.label}>Your Name <span style={styles.required}>*</span></label>
         <input 
@@ -563,7 +591,7 @@ function ProgressBar({ current, total }) {
 }
 
 // ===== Step Components =====
-function AccountSetup({ email, setEmail, password, setPassword, errors }) {
+function AccountSetup({ email, setEmail, password, setPassword, confirmPassword, setConfirmPassword, errors }) {
   return (
     <div style={styles.stepContent}>
       <h2>Create Your Account</h2>
@@ -594,6 +622,19 @@ function AccountSetup({ email, setEmail, password, setPassword, errors }) {
         }}
       />
       {errors.password && <p style={styles.errorText}>{errors.password}</p>}
+
+      <label style={styles.label}>Confirm Password <span style={styles.required}>*</span></label>
+      <input
+        type="password"
+        placeholder="Re-enter your password"
+        value={confirmPassword}
+        onChange={e => setConfirmPassword(e.target.value)}
+        style={{
+          ...styles.input,
+          ...(errors.confirmPassword ? styles.inputError : {})
+        }}
+      />
+      {errors.confirmPassword && <p style={styles.errorText}>{errors.confirmPassword}</p>}
     </div>
   );
 }
