@@ -17,8 +17,8 @@ const styles = {
     flexDirection: "column",
     alignItems: "center",
     gap: "0.75rem",
-    margin: "1rem 0",
+    margin: "1rem auto",
+    justifyContent: "center", 
     width: "100%",
-    maxWidth: "200px"
   }
 };

@@ -1,5 +1,6 @@
-// Fixed: Required vs optional field validation, location step added, proper error handling
-
+// Fixes: 
+// 1. In the self service signup (free signup) there should be a second password feild (I don't remember the term) to mitigate hiccups. 
+// 2. I tested the voice input component and it didn't work. debug it and we will go through it little by little. 
 import React, { useState } from "react";
 import { db, auth } from "../firebase";
 import { doc, setDoc, addDoc, collection, serverTimestamp } from "firebase/firestore";

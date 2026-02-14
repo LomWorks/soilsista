@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { db } from "../firebase";
-import { collection, getDocs, doc, updateDoc, deleteDoc, query, orderBy, where, limit } from "firebase/firestore";
+import { collection, getDocs, doc, updateDoc, deleteDoc, query, orderBy, where, limit, onSnapshot } from "firebase/firestore";
 import { motion, AnimatePresence } from "framer-motion";
 
 export default function AdminPanel() {
@@ -8,12 +8,14 @@ export default function AdminPanel() {
   const [users, setUsers] = useState([]);
   const [activities, setActivities] = useState([]);
   const [adminNotifications, setAdminNotifications] = useState([]);
+  const [contactMessages, setContactMessages] = useState([]);
   const [loading, setLoading] = useState(true);
   const [stats, setStats] = useState({
     totalUsers: 0,
     activeUsers: 0,
     pendingConsultations: 0,
     unreadNotifications: 0,
+    unreadContactMessages: 0,
     todayAlerts: 0
   });
 
@@ -33,6 +35,25 @@ export default function AdminPanel() {
   useEffect(() => {
     if (authenticated) {
       fetchAllData();
+      
+      // Real-time listener for contact messages
+      const unsubscribe = onSnapshot(
+        query(collection(db, "contact_messages"), orderBy("createdAt", "desc")),
+        (snapshot) => {
+          const msgs = snapshot.docs.map(doc => ({
+            id: doc.id,
+            ...doc.data(),
+            createdAt: doc.data().createdAt?.toDate()
+          }));
+          setContactMessages(msgs);
+          
+          // Update unread count
+          const unreadCount = msgs.filter(m => m.status === "unread").length;
+          setStats(prev => ({ ...prev, unreadContactMessages: unreadCount }));
+        }
+      );
+
+      return () => unsubscribe();
     }
   }, [authenticated]);
 
@@ -104,13 +125,14 @@ export default function AdminPanel() {
         return a.type === "weather_alert" && activityDate === today;
       }).length;
 
-      setStats({
+      setStats(prev => ({
+        ...prev,
         totalUsers: usersData.length,
         activeUsers: activeUsersCount,
         pendingConsultations,
         unreadNotifications,
         todayAlerts
-      });
+      }));
 
     } catch (error) {
       console.error("Error fetching data:", error);
@@ -127,6 +149,43 @@ export default function AdminPanel() {
       fetchAllData();
     } catch (error) {
       console.error("Error marking as read:", error);
+    }
+  };
+
+  const markContactAsRead = async (messageId) => {
+    try {
+      await updateDoc(doc(db, "contact_messages", messageId), {
+        status: "read",
+        readAt: new Date()
+      });
+    } catch (error) {
+      console.error("Error marking as read:", error);
+      alert("Failed to update status");
+    }
+  };
+
+  const markContactAsUnread = async (messageId) => {
+    try {
+      await updateDoc(doc(db, "contact_messages", messageId), {
+        status: "unread",
+        readAt: null
+      });
+    } catch (error) {
+      console.error("Error marking as unread:", error);
+      alert("Failed to update status");
+    }
+  };
+
+  const deleteContactMessage = async (messageId) => {
+    if (!window.confirm("Are you sure you want to delete this message?")) {
+      return;
+    }
+
+    try {
+      await deleteDoc(doc(db, "contact_messages", messageId));
+    } catch (error) {
+      console.error("Error deleting message:", error);
+      alert("Failed to delete message");
     }
   };
 
@@ -283,6 +342,15 @@ export default function AdminPanel() {
           highlight={stats.pendingConsultations > 0}
         />
         <StatCard 
+          icon="✉️" 
+          label="Contact Messages" 
+          value={stats.unreadContactMessages}
+          subtitle="Unread messages"
+          color="#5A9F6E"
+          delay={0.25}
+          highlight={stats.unreadContactMessages > 0}
+        />
+        <StatCard 
           icon="🔔" 
           label="Unread Notifications" 
           value={stats.unreadNotifications}
@@ -305,6 +373,7 @@ export default function AdminPanel() {
       <div style={styles.tabs}>
         {[
           { key: "overview", label: "Overview", badge: null },
+          { key: "contact_messages", label: "Contact Messages", badge: stats.unreadContactMessages },
           { key: "notifications", label: "Notifications", badge: stats.unreadNotifications },
           { key: "users", label: "All Users", badge: null },
           { key: "consultations", label: "Consultations", badge: stats.pendingConsultations },
@@ -333,8 +402,18 @@ export default function AdminPanel() {
             <OverviewTab 
               users={users}
               notifications={adminNotifications}
+              contactMessages={contactMessages}
               activities={activities}
               stats={stats}
+            />
+          )}
+
+          {activeTab === "contact_messages" && (
+            <ContactMessagesTab 
+              messages={contactMessages}
+              onMarkAsRead={markContactAsRead}
+              onMarkAsUnread={markContactAsUnread}
+              onDelete={deleteContactMessage}
             />
           )}
           
@@ -397,12 +476,168 @@ function StatCard({ icon, label, value, subtitle, color, delay, highlight }) {
   );
 }
 
+// Contact Messages Tab - NEW!
+function ContactMessagesTab({ messages, onMarkAsRead, onMarkAsUnread, onDelete }) {
+  const [filter, setFilter] = useState("all");
+
+  const openEmailClient = (email, name, originalMessage) => {
+    const subject = encodeURIComponent(`Re: Your message to Soil Sista`);
+    const body = encodeURIComponent(
+      `Hi ${name},\n\nThank you for reaching out to Soil Sista!\n\n` +
+      `---\nYour original message:\n"${originalMessage}"\n---\n\n`
+    );
+    window.location.href = `mailto:${email}?subject=${subject}&body=${body}`;
+  };
+
+  const filteredMessages = messages.filter(msg => {
+    if (filter === "unread") return msg.status === "unread";
+    if (filter === "read") return msg.status === "read";
+    return true;
+  });
+
+  const unreadCount = messages.filter(m => m.status === "unread").length;
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      transition={{ duration: 0.3 }}
+    >
+      <div style={styles.tableHeader}>
+        <div>
+          <h2>Contact Messages ({messages.length})</h2>
+          <p style={styles.headerSubtitle}>
+            {unreadCount > 0 && `${unreadCount} unread message${unreadCount !== 1 ? 's' : ''}`}
+          </p>
+        </div>
+
+        <div style={styles.filterButtons}>
+          <button
+            onClick={() => setFilter("all")}
+            style={{
+              ...styles.filterButton,
+              ...(filter === "all" ? styles.filterActive : {})
+            }}
+          >
+            All ({messages.length})
+          </button>
+          <button
+            onClick={() => setFilter("unread")}
+            style={{
+              ...styles.filterButton,
+              ...(filter === "unread" ? styles.filterActive : {})
+            }}
+          >
+            Unread ({unreadCount})
+          </button>
+          <button
+            onClick={() => setFilter("read")}
+            style={{
+              ...styles.filterButton,
+              ...(filter === "read" ? styles.filterActive : {})
+            }}
+          >
+            Read ({messages.length - unreadCount})
+          </button>
+        </div>
+      </div>
+
+      {filteredMessages.length === 0 ? (
+        <div style={styles.emptyState}>
+          <p style={{ fontSize: "3rem" }}>📭</p>
+          <p>{filter === "all" ? "No messages yet" : `No ${filter} messages`}</p>
+        </div>
+      ) : (
+        <div style={styles.contactMessagesList}>
+          {filteredMessages.map((msg, index) => (
+            <motion.div
+              key={msg.id}
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: index * 0.05 }}
+              style={{
+                ...styles.contactMessageCard,
+                ...(msg.status === "unread" ? styles.contactMessageUnread : {})
+              }}
+            >
+              {/* Header */}
+              <div style={styles.contactMessageHeader}>
+                <div style={styles.contactSenderInfo}>
+                  <h3 style={styles.contactSenderName}>
+                    {msg.status === "unread" && <span style={styles.contactUnreadDot}>●</span>}
+                    {msg.senderName}
+                  </h3>
+                  <a 
+                    href={`mailto:${msg.senderEmail}`}
+                    style={styles.contactSenderEmail}
+                  >
+                    {msg.senderEmail}
+                  </a>
+                </div>
+                <p style={styles.contactTimestamp}>
+                  {msg.createdAt?.toLocaleString('en-US', {
+                    month: 'short',
+                    day: 'numeric',
+                    year: 'numeric',
+                    hour: 'numeric',
+                    minute: '2-digit'
+                  })}
+                </p>
+              </div>
+
+              {/* Message */}
+              <p style={styles.contactMessageText}>{msg.message}</p>
+
+              {/* Actions */}
+              <div style={styles.contactActions}>
+                <button
+                  onClick={() => openEmailClient(msg.senderEmail, msg.senderName, msg.message)}
+                  style={styles.contactReplyBtn}
+                >
+                  ✉️ Reply via Email
+                </button>
+
+                <div style={styles.contactSecondaryActions}>
+                  {msg.status === "unread" ? (
+                    <button
+                      onClick={() => onMarkAsRead(msg.id)}
+                      style={styles.contactActionBtn}
+                    >
+                      ✓ Mark Read
+                    </button>
+                  ) : (
+                    <button
+                      onClick={() => onMarkAsUnread(msg.id)}
+                      style={styles.contactActionBtn}
+                    >
+                      ↶ Mark Unread
+                    </button>
+                  )}
+
+                  <button
+                    onClick={() => onDelete(msg.id)}
+                    style={styles.deleteButton}
+                  >
+                    🗑️ Delete
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          ))}
+        </div>
+      )}
+    </motion.div>
+  );
+}
+
 // Overview Tab
-function OverviewTab({ users, notifications, activities, stats }) {
+function OverviewTab({ users, notifications, contactMessages, activities, stats }) {
   const recentUsers = users.slice(0, 5);
   const urgentNotifications = notifications.filter(n => 
     n.status === "unread" && n.priority === "high"
   ).slice(0, 3);
+  const recentContactMessages = contactMessages.filter(m => m.status === "unread").slice(0, 3);
   const recentActivities = activities.slice(0, 8);
 
   return (
@@ -415,9 +650,25 @@ function OverviewTab({ users, notifications, activities, stats }) {
       <h2>Dashboard Overview</h2>
       
       {/* Urgent Section */}
-      {urgentNotifications.length > 0 && (
+      {(urgentNotifications.length > 0 || recentContactMessages.length > 0) && (
         <div style={styles.urgentSection}>
           <h3 style={styles.urgentTitle}>🔥 Urgent - Needs Attention</h3>
+          
+          {recentContactMessages.map(msg => (
+            <div key={msg.id} style={styles.urgentItem}>
+              <div>
+                <strong>✉️ Contact: {msg.senderName}</strong>
+                <p style={styles.urgentMessage}>{msg.message.substring(0, 100)}...</p>
+              </div>
+              <button
+                onClick={() => setActiveTab("contact_messages")}
+                style={styles.urgentButton}
+              >
+                View
+              </button>
+            </div>
+          ))}
+
           {urgentNotifications.map(notif => (
             <div key={notif.id} style={styles.urgentItem}>
               <div>
@@ -425,7 +676,7 @@ function OverviewTab({ users, notifications, activities, stats }) {
                 <p style={styles.urgentMessage}>{notif.message}</p>
               </div>
               <button
-                onClick={() => window.location.hash = "#notifications"}
+                onClick={() => setActiveTab("notifications")}
                 style={styles.urgentButton}
               >
                 View
@@ -995,7 +1246,7 @@ const styles = {
   },
   statsGrid: {
     display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(250px, 1fr))",
+    gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
     gap: "1.5rem",
     marginBottom: "2rem"
   },
@@ -1163,6 +1414,105 @@ const styles = {
     padding: "3rem",
     fontStyle: "italic"
   },
+
+  // Contact Messages Styles
+  contactMessagesList: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "1rem",
+    marginTop: "1.5rem"
+  },
+  contactMessageCard: {
+    background: "white",
+    padding: "1.5rem",
+    borderRadius: "12px",
+    boxShadow: "0 2px 4px rgba(0,0,0,0.1)",
+    border: "2px solid transparent",
+    transition: "all 0.2s"
+  },
+  contactMessageUnread: {
+    borderColor: "var(--soil-green)",
+    background: "#f0fdf4"
+  },
+  contactMessageHeader: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    marginBottom: "1rem",
+    gap: "1rem",
+    flexWrap: "wrap"
+  },
+  contactSenderInfo: {
+    flex: 1,
+    minWidth: "200px"
+  },
+  contactSenderName: {
+    fontSize: "1.1rem",
+    fontWeight: "600",
+    color: "var(--ink-black)",
+    marginBottom: "0.25rem",
+    display: "flex",
+    alignItems: "center",
+    gap: "0.5rem"
+  },
+  contactUnreadDot: {
+    color: "var(--soil-green)",
+    fontSize: "1.5rem"
+  },
+  contactSenderEmail: {
+    color: "#4a5568",
+    fontSize: "0.9rem",
+    textDecoration: "none"
+  },
+  contactTimestamp: {
+    color: "#999",
+    fontSize: "0.85rem",
+    whiteSpace: "nowrap"
+  },
+  contactMessageText: {
+    color: "#333",
+    lineHeight: "1.6",
+    marginBottom: "1.5rem",
+    whiteSpace: "pre-wrap",
+    padding: "1rem",
+    background: "#f9f9f9",
+    borderRadius: "8px"
+  },
+  contactActions: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: "1rem",
+    flexWrap: "wrap"
+  },
+  contactReplyBtn: {
+    padding: "0.75rem 1.5rem",
+    background: "var(--soil-green)",
+    color: "white",
+    border: "none",
+    borderRadius: "8px",
+    fontSize: "0.95rem",
+    fontWeight: "600",
+    cursor: "pointer",
+    transition: "all 0.2s"
+  },
+  contactSecondaryActions: {
+    display: "flex",
+    gap: "0.5rem",
+    flexWrap: "wrap"
+  },
+  contactActionBtn: {
+    padding: "0.5rem 1rem",
+    background: "#f3f4f6",
+    color: "#374151",
+    border: "none",
+    borderRadius: "8px",
+    fontSize: "0.85rem",
+    cursor: "pointer",
+    transition: "all 0.2s"
+  },
+
+  // Other existing styles
   notificationsContainer: {
     display: "flex",
     flexDirection: "column",
@@ -1283,7 +1633,8 @@ const styles = {
   },
   filterButtons: {
     display: "flex",
-    gap: "0.5rem"
+    gap: "0.5rem",
+    flexWrap: "wrap"
   },
   filterButton: {
     padding: "0.5rem 1rem",

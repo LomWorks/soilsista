@@ -1,3 +1,6 @@
+// A few things: 
+// The contact form didn't work because of a 400 error sending message error showed missing or insuciffient permissions. 
+// The loading screen also doesn't exist in it's right spot. 
 import { useState } from "react";
 import { motion } from "framer-motion";
 import { db } from "../firebase";
