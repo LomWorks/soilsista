@@ -36,15 +36,13 @@ service cloud.firestore {
     // ===== Activities Collection =====
     // Used for notifications, consultations, and system messages
     match /activities/{activityId} {
-      // Anyone can create activities (for contact forms, new signups, etc.)
-      // But must include a userId or be a system message
-      allow create: if request.resource.data.userId != null || 
+      // Anyone authenticated can create activities with their userId
+      // OR anyone can create system notifications (for contact forms, etc.)
+      allow create: if (isSignedIn() && request.resource.data.userId == request.auth.uid) ||
                       request.resource.data.type == "notification";
       
       // Users can read their own activities
-      allow read: if isSignedIn() && 
-                    (resource.data.userId == request.auth.uid || 
-                     !exists(/databases/$(database)/documents/activities/$(activityId)));
+      allow read: if isSignedIn() && resource.data.userId == request.auth.uid;
       
       // Users can update their own activities (e.g., mark as read)
       allow update: if isSignedIn() && resource.data.userId == request.auth.uid;
