@@ -119,7 +119,7 @@ export default function About() {
             <h4>🕳️ Pothole (Subsistence) Farming</h4>
             <p>
               Traditional technique using the natural potholes in limestone rock to grow crops. 
-              Grow what you need, sell any extra - a time-tested method for our challenging soils.
+              Grow what you need, sell any extra. A time-tested method for our challenging soils.
             </p>
           </div>
           
