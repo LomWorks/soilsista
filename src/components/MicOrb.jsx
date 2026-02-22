@@ -1,126 +1,119 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { motion } from "framer-motion";
 
 export default function MicOrb({ onTranscript, placeholder = "Tap to speak..." }) {
   const [listening, setListening] = useState(false);
   const [transcript, setTranscript] = useState("");
   const [error, setError] = useState("");
+
+  // Use refs for values needed inside event handlers to avoid stale closures
   const recognitionRef = useRef(null);
   const isManualStop = useRef(false);
+  const listeningRef = useRef(false); // mirror of listening state for use inside callbacks
 
-  // Detect if user is on mobile
   const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
   const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
 
+  // Keep listeningRef in sync with state
   useEffect(() => {
-    // Check if browser supports speech recognition
+    listeningRef.current = listening;
+  }, [listening]);
+
+  // ✅ FIX: Setup runs ONCE on mount only — no [listening] dependency
+  useEffect(() => {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    
+
     if (!SpeechRecognition) {
       setError("Voice input not supported in this browser. Please use Chrome, Safari, or Edge.");
       return;
     }
 
-    recognitionRef.current = new SpeechRecognition();
-    
-    // CRITICAL FIX: Different settings for mobile vs desktop
+    const recognition = new SpeechRecognition();
+
     if (isMobile) {
-      // Mobile-optimized settings
-      recognitionRef.current.continuous = false; // iOS requires false
-      recognitionRef.current.interimResults = true; // Show live results
-      recognitionRef.current.maxAlternatives = 1; // Reduce processing
+      recognition.continuous = false;
+      recognition.interimResults = true;
+      recognition.maxAlternatives = 1;
     } else {
-      // Desktop settings - can use continuous
-      recognitionRef.current.continuous = true;
-      recognitionRef.current.interimResults = true;
-      recognitionRef.current.maxAlternatives = 3;
+      recognition.continuous = true;
+      recognition.interimResults = true;
+      recognition.maxAlternatives = 3;
     }
-    
-    // Language: en-US works best for Caribbean English
-    recognitionRef.current.lang = 'en-US';
-    
-    recognitionRef.current.onstart = () => {
-      console.log('Speech recognition started');
+
+    recognition.lang = "en-US";
+
+    recognition.onstart = () => {
+      console.log("Speech recognition started");
+      isManualStop.current = false;
       setListening(true);
       setError("");
-      isManualStop.current = false;
     };
-    
-    recognitionRef.current.onresult = (event) => {
-      let interimTranscript = '';
-      let finalTranscript = '';
+
+    recognition.onresult = (event) => {
+      let interimTranscript = "";
+      let finalTranscript = "";
 
       for (let i = event.resultIndex; i < event.results.length; i++) {
         const result = event.results[i];
-        const transcriptText = result[0].transcript;
-        
+        const text = result[0].transcript;
         if (result.isFinal) {
-          finalTranscript += transcriptText + ' ';
+          finalTranscript += text + " ";
         } else {
-          interimTranscript += transcriptText;
+          interimTranscript += text;
         }
       }
 
-      const fullTranscript = finalTranscript || interimTranscript;
-      setTranscript(fullTranscript);
-      onTranscript(fullTranscript);
+      // ✅ FIX: Only show interim locally — only send FINAL text to parent
+      const displayText = finalTranscript || interimTranscript;
+      setTranscript(displayText);
+
+      if (finalTranscript) {
+        onTranscript(finalTranscript.trim());
+      }
     };
 
-    recognitionRef.current.onerror = (event) => {
-      console.error('Speech recognition error:', event.error);
-      
-      // Handle different error types
-      switch(event.error) {
-        case 'no-speech':
-          if (isMobile) {
-            setError('No speech detected. Tap the orb to try again.');
-          } else {
-            setError('No speech detected. Please try again.');
-          }
+    recognition.onerror = (event) => {
+      console.error("Speech recognition error:", event.error);
+
+      switch (event.error) {
+        case "no-speech":
+          setError(isMobile
+            ? "No speech detected. Tap the orb to try again."
+            : "No speech detected. Please try again.");
           break;
-        case 'audio-capture':
-          setError('No microphone found. Please check your device.');
+        case "audio-capture":
+          setError("No microphone found. Please check your device.");
           break;
-        case 'not-allowed':
-          setError('Microphone permission denied. Please enable it in browser settings.');
+        case "not-allowed":
+          setError("Microphone permission denied. Please enable it in browser settings.");
           break;
-        case 'network':
-          setError('Network error. Check your internet connection.');
+        case "network":
+          setError("Network error. Check your internet connection.");
           break;
-        case 'aborted':
-          // User manually stopped - this is normal
+        case "aborted":
+          // User manually stopped — normal, do nothing
           break;
         default:
           setError(`Error: ${event.error}`);
       }
-      
-      // Only stop if it's a real error (not user action)
-      if (event.error !== 'aborted') {
+
+      if (event.error !== "aborted") {
         setListening(false);
       }
     };
 
-    recognitionRef.current.onend = () => {
-      console.log('Speech recognition ended');
-      
-      // CRITICAL FIX FOR MOBILE:
-      // Only restart if:
-      // 1. User is still supposed to be listening
-      // 2. They didn't manually stop
-      // 3. We're on mobile (iOS auto-stops after ~60 seconds)
-      
-      if (listening && !isManualStop.current && isMobile) {
-        // On mobile, recognition stops automatically
-        // So we just update the state without restarting
-        setListening(false);
-      } else if (listening && !isManualStop.current && !isMobile) {
-        // On desktop, try to restart for continuous mode
+    recognition.onend = () => {
+      console.log("Speech recognition ended");
+
+      // ✅ FIX: Use ref instead of stale state
+      if (listeningRef.current && !isManualStop.current && !isMobile) {
+        // Desktop continuous mode: restart
         setTimeout(() => {
-          if (listening && recognitionRef.current && !isManualStop.current) {
+          if (listeningRef.current && !isManualStop.current) {
             try {
-              recognitionRef.current.start();
-            } catch (error) {
-              console.log('Could not restart recognition:', error.message);
+              recognition.start();
+            } catch (e) {
+              console.log("Could not restart recognition:", e.message);
               setListening(false);
             }
           }
@@ -130,52 +123,47 @@ export default function MicOrb({ onTranscript, placeholder = "Tap to speak..." }
       }
     };
 
+    recognitionRef.current = recognition;
+
     return () => {
-      if (recognitionRef.current) {
-        try {
-          recognitionRef.current.abort();
-        } catch (e) {
-          // Already stopped
-        }
+      try {
+        recognition.abort();
+      } catch (e) {
+        // Already stopped
       }
     };
-  }, [listening, onTranscript, isMobile]);
+  }, []); // ✅ Empty deps — setup once only
 
-  const toggleListening = () => {
+  const toggleListening = useCallback(() => {
     if (!recognitionRef.current) {
       alert("Speech recognition is not supported in this browser. Please use Chrome, Edge, or Safari.");
       return;
     }
 
-    if (listening) {
-      // Stop listening
+    if (listeningRef.current) {
       isManualStop.current = true;
       try {
         recognitionRef.current.stop();
-      } catch (error) {
-        console.error('Error stopping recognition:', error);
+      } catch (e) {
+        console.error("Error stopping recognition:", e);
       }
       setListening(false);
     } else {
-      // Start listening
       setTranscript("");
       setError("");
       isManualStop.current = false;
-      
       try {
         recognitionRef.current.start();
-      } catch (error) {
-        console.error('Error starting recognition:', error);
-        
-        if (error.message && error.message.includes('already started')) {
-          // Recognition is already running
+      } catch (e) {
+        console.error("Error starting recognition:", e);
+        if (e.message && e.message.includes("already started")) {
           setListening(true);
         } else {
-          setError('Could not start microphone. Please try again.');
+          setError("Could not start microphone. Please try again.");
         }
       }
     }
-  };
+  }, []);
 
   return (
     <div style={styles.wrapper}>
@@ -202,19 +190,14 @@ export default function MicOrb({ onTranscript, placeholder = "Tap to speak..." }
         }}
         style={{
           ...styles.orb,
-          background: listening 
+          background: listening
             ? "linear-gradient(135deg, var(--soil-green) 0%, var(--deep-leaf) 100%)"
             : "linear-gradient(135deg, var(--deep-leaf) 0%, var(--soil-green) 100%)"
         }}
       >
         <motion.span
-          animate={{
-            scale: listening ? [1, 1.2, 1] : 1
-          }}
-          transition={{
-            repeat: Infinity,
-            duration: 0.8
-          }}
+          animate={{ scale: listening ? [1, 1.2, 1] : 1 }}
+          transition={{ repeat: Infinity, duration: 0.8 }}
           style={styles.icon}
         >
           {listening ? "🎤" : "🎙️"}
@@ -263,14 +246,13 @@ export default function MicOrb({ onTranscript, placeholder = "Tap to speak..." }
           <ul style={styles.tipList}>
             <li>Speak clearly and at a normal pace</li>
             <li>Reduce background noise</li>
-            <li>{isMobile ? 'Hold phone 6-8 inches from mouth' : 'Speak into your microphone'}</li>
+            <li>{isMobile ? "Hold phone 6-8 inches from mouth" : "Speak into your microphone"}</li>
             <li>Pause briefly between sentences</li>
             {isMobile && (
               <li>
-                {isIOS 
+                {isIOS
                   ? "On iPhone: Tap again after speaking to finish"
-                  : "On mobile: Recording may stop automatically after speaking"
-                }
+                  : "On mobile: Recording may stop automatically after speaking"}
               </li>
             )}
           </ul>
@@ -301,12 +283,12 @@ const styles = {
     userSelect: "none",
     border: "3px solid var(--soil-green)",
     transition: "all 0.3s ease",
-    WebkitTapHighlightColor: "transparent", // Remove tap highlight on mobile
-    touchAction: "manipulation" // Prevent double-tap zoom on iOS
+    WebkitTapHighlightColor: "transparent",
+    touchAction: "manipulation"
   },
   icon: {
     display: "block",
-    pointerEvents: "none" // Prevent icon from intercepting clicks
+    pointerEvents: "none"
   },
   statusText: {
     marginTop: "1.5rem",
