@@ -1,4 +1,4 @@
-const functions = require('firebase-functions');
+const functions = require('firebase-functions/v1');
 const admin = require('firebase-admin');
 const { getMilestoneMessage } = require('../utils/helpers');
 const { DASHBOARD_URL } = require('../config/constants');
