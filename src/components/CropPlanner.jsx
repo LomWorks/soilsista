@@ -370,7 +370,7 @@ export default function CropPlanner({ userData }) {
     } else {
       setIncompatWarning(null);
     }
-  }, [selectedCropName, selectedVariantIdx, userData]);
+  }, [selectedCropName, selectedVariantIdx, selectedCrop, userData]);
 
   const validate = () => {
     const e = {};

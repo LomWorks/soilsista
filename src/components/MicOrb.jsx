@@ -10,11 +10,13 @@ export default function MicOrb({ onTranscript, placeholder = "Tap to speak..." }
   const recognitionRef = useRef(null);
   const isManualStop = useRef(false);
   const listeningRef = useRef(false); // mirror of listening state for use inside callbacks
+  const onTranscriptRef = useRef(onTranscript); // ref so the setup effect always calls the latest callback
 
   const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
   const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
 
-  // Keep listeningRef in sync with state
+  // Keep refs in sync with latest props/state
+  useEffect(() => { onTranscriptRef.current = onTranscript; }, [onTranscript]);
   useEffect(() => {
     listeningRef.current = listening;
   }, [listening]);
@@ -68,7 +70,7 @@ export default function MicOrb({ onTranscript, placeholder = "Tap to speak..." }
       setTranscript(displayText);
 
       if (finalTranscript) {
-        onTranscript(finalTranscript.trim());
+        onTranscriptRef.current(finalTranscript.trim());
       }
     };
 
@@ -132,7 +134,8 @@ export default function MicOrb({ onTranscript, placeholder = "Tap to speak..." }
         // Already stopped
       }
     };
-  }, []); // ✅ Empty deps — setup once only
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // Intentionally runs once — isMobile never changes, onTranscript accessed via ref
 
   const toggleListening = useCallback(() => {
     if (!recognitionRef.current) {
