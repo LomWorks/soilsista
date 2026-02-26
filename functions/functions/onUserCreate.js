@@ -15,7 +15,14 @@ const admin = require('firebase-admin');
  */
 module.exports = functions.auth.user().onCreate(async (user) => {
   console.log(`New user created: ${user.uid}`);
-  
+
+  // Skip admin account — Google OAuth login should not create a farmer document
+  const adminEmail = process.env.ADMIN_EMAIL;
+  if (adminEmail && user.email === adminEmail) {
+    console.log(`Skipping farmer document creation for admin: ${user.email}`);
+    return null;
+  }
+
   try {
     // Create user document with default values
     await admin.firestore().collection('users').doc(user.uid).set({

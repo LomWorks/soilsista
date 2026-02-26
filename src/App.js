@@ -13,15 +13,16 @@ function App() {
   return (
     <Router>
       <Navbar />
-      <Routes>
-        <Route path="/" element={<Home />} />
-        <Route path="/about" element={<About />} />
-        <Route path="/contact" element={<Contact />} />
-        <Route path="/get-started" element={<EnhancedOnboarding />} />
-        <Route path="/dashboard" element={<Dashboard />} />
-        <Route path="/login" element={<Login />} /> 
-        <Route path="/admin" element={<AdminPanel />} />
-      </Routes>
+     <Routes>
+  <Route path="/"            element={<Home />} />
+  <Route path="/about"       element={<About />} />
+  <Route path="/contact"     element={<Contact />} />
+  <Route path="/get-started" element={<EnhancedOnboarding />} />
+  <Route path="/dashboard"   element={<SessionGuard><Dashboard /></SessionGuard>} />
+  <Route path="/login"       element={<Login />} />
+  <Route path="/admin"       element={<AdminPanel />} />
+      <Route path="*"            element={<NotFound />} />
+  </Routes>
     </Router>
   );
 }

@@ -73,12 +73,22 @@ module.exports = functions.firestore
  */
 async function handleContactMessage(activity, activityId) {
   console.log('Processing contact message...');
-  
+
   const { senderName, senderEmail } = activity.data;
-  
-  // Create admin notification (visible in admin panel)
+
+  // Write to contact_messages collection — this is what the Admin Panel reads from
+  await admin.firestore().collection('contact_messages').add({
+    name: senderName,
+    email: senderEmail,
+    message: activity.message,
+    status: 'unread',
+    originalActivityId: activityId,
+    createdAt: admin.firestore.FieldValue.serverTimestamp()
+  });
+
+  // Also create an admin_notification in activities for the notification feed
   await admin.firestore().collection('activities').add({
-    userId: null, // No specific user - this is for admin
+    userId: null,
     type: 'admin_notification',
     category: 'admin',
     title: `New Contact from ${senderName}`,
@@ -93,10 +103,10 @@ async function handleContactMessage(activity, activityId) {
       contactType: 'contact_form'
     },
     createdAt: admin.firestore.FieldValue.serverTimestamp(),
-    expiresAt: null // Admin notifications don't expire
+    expiresAt: null
   });
-  
-  console.log('Admin notification created for contact message');
+
+  console.log('Contact message saved to contact_messages + admin notified');
 }
 
 /**

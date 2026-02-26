@@ -215,8 +215,9 @@ async function createPlantingReminders(tomorrow) {
       console.log(`Reminder: Transplant ${planData.cropName} tomorrow`);
     }
     
-    // Check harvest date
-    if (planData.harvestDate && isSameDay(planData.harvestDate.toDate(), tomorrow)) {
+    // Check harvest date (CropPlanner saves as harvestStart)
+    const harvestDateField = planData.harvestStart || planData.harvestDate;
+    if (harvestDateField && isSameDay(harvestDateField.toDate(), tomorrow)) {
       const reminderRef = admin.firestore().collection('activities').doc();
       batch.set(reminderRef, {
         userId: plan.userId,

@@ -4,10 +4,10 @@ module.exports = {
   // Weather API (Open-Meteo - FREE, no key needed!)
   WEATHER_API_URL: 'https://api.open-meteo.com/v1/forecast',
   
-  // App URLs
-  APP_URL: 'https://soil-sista.web.app',
-  ADMIN_URL: 'https://soil-sista.web.app/admin',
-  DASHBOARD_URL: 'https://soil-sista.web.app/dashboard',
+  // App URLs — update to soilsista.org once DNS is live
+  APP_URL: 'https://soilsista.org',
+  ADMIN_URL: 'https://soilsista.org/admin',
+  DASHBOARD_URL: 'https://soilsista.org/dashboard',
   
   // Timezone
   TIMEZONE: 'America/Antigua',

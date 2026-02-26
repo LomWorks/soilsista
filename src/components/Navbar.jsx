@@ -28,11 +28,11 @@ export default function Navbar() {
           to="/login"
           style={{
             ...styles.link,
-            ...(isActive('/about') ? styles.linkActive : {})
+            ...(isActive('/login') ? styles.linkActive : {})
           }}
-          >
-            Sign In
-          </Link>
+        >
+          Sign In
+        </Link>
         <Link 
           to="/about" 
           style={{

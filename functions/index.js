@@ -1,7 +1,8 @@
-// maybe the backend weather.js helper should be used here for ease in wiring (async function fetchWeather and analyzeWeather) (Reffering to the frontend WeatherWidget.jsx file). 
-// I have other utilities that aren't being used whether directly or indirectly (i.e isSameDay, groupUsersByLocation, formatDate, getMilestoneMessage, truncate). 
-// The existing individual function files also throw errors when I try to push them to the cloud. 
-const admin = require('firebase-admin'); 
+// Required environment variables (set via Firebase Functions config):
+// ADMIN_EMAIL — the Google account email for admin panel access
+// Set with: firebase functions:config:set admin.email="info@soilsista.org"
+// Then access in functions as: process.env.ADMIN_EMAIL
+const admin = require('firebase-admin');
 
 // Initialize Firebase Admin SDK 
 admin.initializeApp(); 
