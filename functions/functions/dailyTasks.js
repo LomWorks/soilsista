@@ -6,102 +6,82 @@ const { TIMEZONE, DASHBOARD_URL } = require('../config/constants');
 
 /**
  * FUNCTION 3: dailyTasks
- * 
- * Trigger: Scheduled - Every day at 7:00 AM (Antigua time)
- * Purpose: Run all daily automated tasks
- * 
+ *
+ * Trigger: Scheduled — Every day at 7:00 AM (Antigua time)
  * Tasks:
- * 1. Check weather for all locations
- * 2. Create weather alert activities for affected users
- * 3. Check upcoming crop tasks (sowing, transplanting, harvesting)
- * 4. Create reminder activities for tomorrow's tasks
- * 5. Clean up expired activities
+ *   1. Check weather per island using the user's active crops to pick the
+ *      tightest stress thresholds (sourced from improved master_crops_ANNUALS)
+ *   2. Create weather alert activities for affected users
+ *   3. Create planting/transplant/harvest reminders for tomorrow's tasks
+ *   4. Clean up expired activities
  */
 module.exports = functions.pubsub
   .schedule('every day 07:00')
   .timeZone(TIMEZONE)
   .onRun(async (context) => {
-    
+
     console.log('=== Starting daily tasks ===');
-    
+
     const today = new Date();
     const tomorrow = new Date(today.getTime() + 24 * 60 * 60 * 1000);
-    
+
     try {
-      // Task 1: Weather alerts
       await checkWeatherAndCreateAlerts(today);
-      
-      // Task 2: Planting reminders
       await createPlantingReminders(tomorrow);
-      
-      // Task 3: Cleanup old data
       await cleanupExpiredActivities(today);
-      
       console.log('=== Daily tasks completed successfully ===');
       return null;
-      
     } catch (error) {
       console.error('Error in dailyTasks:', error);
       return null;
     }
   });
 
-/**
- * TASK 1: Check weather and create alert activities
- */
+// ─── TASK 1: Weather alerts with crop-specific thresholds ────────────────────
+
 async function checkWeatherAndCreateAlerts(today) {
   console.log('Task 1: Checking weather for all locations...');
-  
-  // Get all active users with completed onboarding
+
   const usersSnapshot = await admin.firestore()
     .collection('users')
     .where('accountStatus', '==', 'active')
     .where('onboardingComplete', '==', true)
     .get();
-  
+
   if (usersSnapshot.empty) {
     console.log('No active users found');
     return;
   }
-  
-  console.log(`Found ${usersSnapshot.size} active users`);
-  
-  // Group users by island to minimize API calls
-  const usersByIsland = groupUsersByLocation(
-    usersSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }))
-  );
-  
-  // Check weather for each island
-  for (const [island, users] of Object.entries(usersByIsland)) {
-    console.log(`Checking weather for ${island} (${users.length} users)...`);
-    
-    // Fetch weather data
+
+  const users = usersSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+  console.log(`Found ${users.length} active users`);
+
+  const usersByIsland = groupUsersByLocation(users);
+
+  for (const [island, islandUsers] of Object.entries(usersByIsland)) {
+    console.log(`Checking weather for ${island} (${islandUsers.length} users)...`);
+
     const weather = await fetchWeather({ island });
-    
     if (!weather) {
       console.warn(`Could not fetch weather for ${island}`);
       continue;
     }
-    
-    console.log(`Weather for ${island}: ${weather.current.temp}°C, ${weather.forecast[0]}mm rain`);
-    
-    // Analyze weather for alerts
-    const alerts = analyzeWeather(weather);
-    
-    if (alerts.length === 0) {
-      console.log(`No weather alerts for ${island}`);
-      continue;
-    }
-    
-    console.log(`Found ${alerts.length} alert(s) for ${island}`);
-    
-    // Create alert activity for each user on this island
+
     const batch = admin.firestore().batch();
-    
-    for (const user of users) {
+
+    for (const user of islandUsers) {
+      // ── Use this user's active crops for tailored thresholds ──────────────
+      const userCrops = [
+        ...(user.currentCrops || []),
+        ...(user.crops || [])
+      ];
+
+      const alerts = analyzeWeather(weather, userCrops);
+
+      if (alerts.length === 0) continue;
+
       for (const alert of alerts) {
         const activityRef = admin.firestore().collection('activities').doc();
-        
         batch.set(activityRef, {
           userId: user.id,
           type: 'weather_alert',
@@ -113,10 +93,12 @@ async function checkWeatherAndCreateAlerts(today) {
           data: {
             severity: alert.severity,
             alertType: alert.type,
-            island: island,
+            island,
             farmingAdvice: alert.farmingAdvice,
+            activeCrops: userCrops,
             weatherData: {
               currentTemp: weather.current.temp,
+              currentWind: weather.current.windSpeed,
               currentRain: weather.current.precipitation,
               forecast: weather.forecast.slice(0, 3)
             }
@@ -124,125 +106,136 @@ async function checkWeatherAndCreateAlerts(today) {
           actionUrl: DASHBOARD_URL,
           actionLabel: 'View Weather',
           createdAt: admin.firestore.FieldValue.serverTimestamp(),
-          expiresAt: new Date(today.getTime() + 7 * 24 * 60 * 60 * 1000) // 7 days
+          expiresAt: new Date(today.getTime() + 7 * 24 * 60 * 60 * 1000)
         });
       }
+
+      console.log(`Created ${alerts.length} alert(s) for user ${user.id} (${userCrops.length > 0 ? userCrops.join(', ') : 'no crops on file'})`);
     }
-    
+
     await batch.commit();
-    console.log(`Created ${alerts.length} weather alert(s) for ${users.length} user(s) in ${island}`);
   }
-  
+
   console.log('Weather check complete');
 }
 
-/**
- * TASK 2: Create planting reminders for tomorrow's tasks
- */
+// ─── TASK 2: Planting reminders ──────────────────────────────────────────────
+
 async function createPlantingReminders(tomorrow) {
   console.log('Task 2: Creating planting reminders...');
-  
-  // Get all active crop plans
+
   const plansSnapshot = await admin.firestore()
     .collection('activities')
     .where('type', '==', 'crop_plan')
     .where('status', '!=', 'completed')
     .get();
-  
+
   if (plansSnapshot.empty) {
     console.log('No active crop plans found');
     return;
   }
-  
+
   console.log(`Found ${plansSnapshot.size} active crop plan(s)`);
-  
+
   const batch = admin.firestore().batch();
   let reminderCount = 0;
-  
-  // Check each plan for tasks due tomorrow
+
   for (const planDoc of plansSnapshot.docs) {
     const plan = planDoc.data();
     const planData = plan.data || {};
-    
-    // Check sow date
+
+    // ── Build a descriptive crop label including variant (Gap 3 fix) ─────────
+    const cropLabel = planData.variant
+      ? `${planData.cropName} (${planData.variant})`
+      : planData.cropName;
+
+    // ── Seeds needed — fall back gracefully if field is missing (Gap 2 fix) ──
+    const seedsNote = planData.seedsNeeded
+      ? ` (${planData.seedsNeeded} seeds needed)`
+      : '';
+
+    // Sowing reminder
     if (planData.sowDate && isSameDay(planData.sowDate.toDate(), tomorrow)) {
-      const reminderRef = admin.firestore().collection('activities').doc();
-      batch.set(reminderRef, {
+      const ref = admin.firestore().collection('activities').doc();
+      batch.set(ref, {
         userId: plan.userId,
         type: 'reminder',
         category: 'farming',
         title: 'Sowing Reminder 🌱',
-        message: `Tomorrow: Sow ${planData.cropName} seeds${planData.seedsNeeded ? ` (${planData.seedsNeeded} seeds needed)` : ''}`,
+        message: `Tomorrow: Sow ${cropLabel} seeds${seedsNote}`,
         icon: '🌱',
         status: 'unread',
         data: {
           reminderType: 'sow',
           planId: planDoc.id,
           cropName: planData.cropName,
-          seedsNeeded: planData.seedsNeeded
+          variant: planData.variant || null,
+          seedsNeeded: planData.seedsNeeded || null
         },
-        actionUrl: DASHBOARD_URL + '/planner',
-        actionLabel: 'View Plan',
-        createdAt: admin.firestore.FieldValue.serverTimestamp(),
-        expiresAt: new Date(tomorrow.getTime() + 2 * 24 * 60 * 60 * 1000) // 2 days
-      });
-      reminderCount++;
-      console.log(`Reminder: Sow ${planData.cropName} tomorrow`);
-    }
-    
-    // Check transplant date
-    if (planData.transplantDate && isSameDay(planData.transplantDate.toDate(), tomorrow)) {
-      const reminderRef = admin.firestore().collection('activities').doc();
-      batch.set(reminderRef, {
-        userId: plan.userId,
-        type: 'reminder',
-        category: 'farming',
-        title: 'Transplant Reminder 🌿',
-        message: `Tomorrow: Transplant ${planData.cropName} seedlings to garden beds`,
-        icon: '🌿',
-        status: 'unread',
-        data: {
-          reminderType: 'transplant',
-          planId: planDoc.id,
-          cropName: planData.cropName
-        },
-        actionUrl: DASHBOARD_URL + '/planner',
+        actionUrl: `${DASHBOARD_URL}/planner`,
         actionLabel: 'View Plan',
         createdAt: admin.firestore.FieldValue.serverTimestamp(),
         expiresAt: new Date(tomorrow.getTime() + 2 * 24 * 60 * 60 * 1000)
       });
       reminderCount++;
-      console.log(`Reminder: Transplant ${planData.cropName} tomorrow`);
+      console.log(`Reminder: Sow ${cropLabel} tomorrow`);
     }
-    
-    // Check harvest date (CropPlanner saves as harvestStart)
-    const harvestDateField = planData.harvestStart || planData.harvestDate;
-    if (harvestDateField && isSameDay(harvestDateField.toDate(), tomorrow)) {
-      const reminderRef = admin.firestore().collection('activities').doc();
-      batch.set(reminderRef, {
+
+    // Transplant reminder
+    if (planData.transplantDate && isSameDay(planData.transplantDate.toDate(), tomorrow)) {
+      const ref = admin.firestore().collection('activities').doc();
+      batch.set(ref, {
+        userId: plan.userId,
+        type: 'reminder',
+        category: 'farming',
+        title: 'Transplant Reminder 🌿',
+        message: `Tomorrow: Transplant ${cropLabel} seedlings to garden beds`,
+        icon: '🌿',
+        status: 'unread',
+        data: {
+          reminderType: 'transplant',
+          planId: planDoc.id,
+          cropName: planData.cropName,
+          variant: planData.variant || null
+        },
+        actionUrl: `${DASHBOARD_URL}/planner`,
+        actionLabel: 'View Plan',
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        expiresAt: new Date(tomorrow.getTime() + 2 * 24 * 60 * 60 * 1000)
+      });
+      reminderCount++;
+      console.log(`Reminder: Transplant ${cropLabel} tomorrow`);
+    }
+
+    // Harvest reminder — checks harvestStart (new planner) with harvestDate fallback
+    const harvestDate = planData.harvestStart || planData.harvestDate;
+    if (harvestDate && isSameDay(harvestDate.toDate(), tomorrow)) {
+      const ref = admin.firestore().collection('activities').doc();
+      batch.set(ref, {
         userId: plan.userId,
         type: 'reminder',
         category: 'farming',
         title: 'Harvest Time! 🌾',
-        message: `Tomorrow: ${planData.cropName} is ready for harvest! 🎉`,
+        message: `Tomorrow: ${cropLabel} is ready for harvest!${planData.estimatedYield ? ` Expected yield: ${planData.estimatedYield}` : ''} 🎉`,
         icon: '🌾',
         status: 'unread',
         data: {
           reminderType: 'harvest',
           planId: planDoc.id,
           cropName: planData.cropName,
-          estimatedYield: planData.estimatedYield
+          variant: planData.variant || null,
+          estimatedYield: planData.estimatedYield || null
         },
-        actionUrl: DASHBOARD_URL + '/planner',
+        actionUrl: `${DASHBOARD_URL}/planner`,
         actionLabel: 'View Plan',
         createdAt: admin.firestore.FieldValue.serverTimestamp(),
-        expiresAt: new Date(tomorrow.getTime() + 3 * 24 * 60 * 60 * 1000) // 3 days
+        expiresAt: new Date(tomorrow.getTime() + 3 * 24 * 60 * 60 * 1000)
       });
       reminderCount++;
-      console.log(`Reminder: Harvest ${planData.cropName} tomorrow`);
+      console.log(`Reminder: Harvest ${cropLabel} tomorrow`);
     }
   }
-  
+
   if (reminderCount > 0) {
     await batch.commit();
     console.log(`Created ${reminderCount} planting reminder(s)`);
@@ -251,32 +244,24 @@ async function createPlantingReminders(tomorrow) {
   }
 }
 
-/**
- * TASK 3: Clean up expired activities
- */
+// ─── TASK 3: Cleanup expired activities ─────────────────────────────────────
+
 async function cleanupExpiredActivities(today) {
   console.log('Task 3: Cleaning up expired activities...');
-  
-  // Delete expired activities (where expiresAt < today)
+
   const expiredSnapshot = await admin.firestore()
     .collection('activities')
     .where('expiresAt', '<', today)
-    .limit(500) // Process in batches to avoid timeout
+    .limit(500)
     .get();
-  
+
   if (expiredSnapshot.empty) {
     console.log('No expired activities to clean up');
     return;
   }
-  
-  console.log(`Found ${expiredSnapshot.size} expired activities`);
-  
-  // Delete in batch
+
   const batch = admin.firestore().batch();
-  expiredSnapshot.docs.forEach(doc => {
-    batch.delete(doc.ref);
-  });
-  
+  expiredSnapshot.docs.forEach(doc => batch.delete(doc.ref));
   await batch.commit();
   console.log(`Deleted ${expiredSnapshot.size} expired activities`);
 }
