@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import { db, auth } from "../firebase";
-import { doc, getDoc, collection, query, where, orderBy, limit, getDocs, updateDoc } from "firebase/firestore";
+import { doc, getDoc, collection, query, where, orderBy, limit, getDocs } from "firebase/firestore";
 import { onAuthStateChanged } from "firebase/auth";
 import CropPlanner from "../components/CropPlanner";
 import WeatherWidget from "../components/WeatherWidget";
@@ -371,7 +371,7 @@ function WeatherTab({ userData }) {
       <p style={styles.description}>
         Real-time weather and climate insights for {userData.location?.island || "your location"}
       </p>
-      <WeatherWidget location={userData.location} />
+      <WeatherWidget location={userData.location} userData={userData} />
     </motion.div>
   );
 }
