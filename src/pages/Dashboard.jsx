@@ -18,9 +18,8 @@ export default function Dashboard() {
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
       if (currentUser) {
         setUser(currentUser);
-        fetchUserData(currentUser.uid);
+        fetchUserData(currentUser.uid, currentUser); // pass directly — state update is async
       } else {
-        // Redirect to login if not authenticated
         window.location.href = "/get-started";
       }
     });
@@ -28,7 +27,7 @@ export default function Dashboard() {
     return () => unsubscribe();
   }, []);
 
-  const fetchUserData = async (userId) => {
+  const fetchUserData = async (userId, authUser) => {
     setLoading(true);
     
     try {
@@ -37,7 +36,17 @@ export default function Dashboard() {
       
       if (userDoc.exists()) {
         const data = userDoc.data();
-        setUserData({ id: userId, ...data });
+        // Fill name from Auth profile if Firestore doesn't have it yet
+        // Use authUser passed directly — user state may not have updated yet
+        const resolvedName = data.name ||
+          authUser?.displayName ||
+          (authUser?.email ? authUser.email.split('@')[0] : null);
+        setUserData({ id: userId, ...data, name: resolvedName });
+
+        // If name was missing from Firestore, write it back so it persists
+        if (!data.name && resolvedName) {
+          updateDoc(doc(db, "users", userId), { name: resolvedName }).catch(() => {});
+        }
         
         // Fetch user's activities
         const activitiesQuery = query(
@@ -141,6 +150,18 @@ function OverviewTab({ userData, activities }) {
   // Filter activities by type
   const weatherAlerts = activities.filter(a => a.type === "weather_alert");
   const reminders = activities.filter(a => a.type === "reminder" && a.status !== "completed");
+
+  // Derive active crops from both userData.currentCrops AND saved crop_plan activities
+  // so plans saved before the updateDoc fix are still visible
+  const plansFromActivities = activities
+    .filter(a => a.type === "crop_plan")
+    .map(a => a.data?.cropName && a.data?.variant
+      ? `${a.data.cropName} (${a.data.variant})`
+      : a.data?.cropName || a.title?.replace(" Planting Plan", "") || "Unknown crop"
+    );
+  const activeCrops = [
+    ...new Set([...(userData.currentCrops || []), ...plansFromActivities])
+  ];
   
   return (
     <div style={styles.tabContent}>
@@ -155,7 +176,7 @@ function OverviewTab({ userData, activities }) {
           <h3>🌾 Your Farm</h3>
           <div style={styles.statGrid}>
             <div style={styles.stat}>
-              <span style={styles.statValue}>{userData.currentCrops?.length || 0}</span>
+              <span style={styles.statValue}>{activeCrops.length}</span>
               <span style={styles.statLabel}>Active Crops</span>
             </div>
             <div style={styles.stat}>
@@ -173,9 +194,9 @@ function OverviewTab({ userData, activities }) {
           style={styles.card}
         >
           <h3>🥬 Growing Now</h3>
-          {userData.currentCrops && userData.currentCrops.length > 0 ? (
+          {activeCrops.length > 0 ? (
             <div style={styles.cropList}>
-              {userData.currentCrops.map((crop, i) => (
+              {activeCrops.map((crop, i) => (
                 <div key={i} style={styles.cropItem}>
                   <span>{crop}</span>
                   <span style={styles.cropStatus}>Active</span>
@@ -359,36 +380,96 @@ function WeatherTab({ userData }) {
 function ResourcesTab() {
   const resources = [
     {
-      title: "Natural Pest Control Guide",
-      description: "Chemical-free methods to protect your crops",
-      icon: "🐛"
+      icon: "🐛",
+      title: "Natural Pest Control",
+      tips: [
+        "Spray diluted neem oil (2 tbsp per litre) on leaves weekly to deter aphids, whitefly, and mites.",
+        "Introduce marigolds as border plants — their scent repels nematodes and aphids naturally.",
+        "Yellow sticky traps catch whitefly and fungus gnats before populations explode.",
+        "Hand-pick caterpillars and hornworms early morning when they're slowest.",
+        "A soap-water spray (1 tsp dish soap per litre) kills soft-bodied insects on contact."
+      ]
     },
     {
-      title: "Crop Rotation Strategies",
-      description: "Maximize soil health with proper rotation",
-      icon: "🔄"
+      icon: "🔄",
+      title: "Crop Rotation for Caribbean Soils",
+      tips: [
+        "Rotate Solanaceae (tomatoes, peppers, eggplant) with legumes (beans, peas) every season to replenish nitrogen.",
+        "Never follow cabbage with another Brassica — rotate with okra or corn instead.",
+        "Root vegetables (beets, radish) break up compacted soil naturally before planting heavy feeders.",
+        "Resting a bed with green manure (cowpea, velvet bean) for one cycle restores organic matter.",
+        "Keep a simple journal — just crop name and bed location each season — to track rotations."
+      ]
     },
     {
-      title: "Water Management Tips",
-      description: "Efficient irrigation for Caribbean climates",
-      icon: "💧"
+      icon: "💧",
+      title: "Water Management",
+      tips: [
+        "Water deeply and infrequently — shallow daily watering encourages shallow roots that stress faster.",
+        "Drip irrigation at the root zone uses up to 60% less water than overhead sprinklers.",
+        "Mulch with dry grass or sugarcane bagasse to reduce evaporation and keep roots cool.",
+        "Water early morning (before 8am) — afternoon watering causes fungal issues in Caribbean humidity.",
+        "Check soil moisture at 5cm depth before watering — if it's still damp, wait another day."
+      ]
     },
     {
-      title: "Composting 101",
-      description: "Turn waste into nutrient-rich soil",
-      icon: "♻️"
+      icon: "♻️",
+      title: "Composting in the Caribbean",
+      tips: [
+        "Hot composting works fast in Caribbean heat — a well-built pile reaches harvest-ready in 6–8 weeks.",
+        "Balance 3 parts brown (dry leaves, cardboard) to 1 part green (food scraps, fresh cuttings).",
+        "Avoid adding meat, citrus, or diseased plants — these attract pests or kill beneficial microbes.",
+        "Turning the pile every 3–4 days keeps oxygen flowing and speeds decomposition significantly.",
+        "Finished compost should smell earthy, not rotten — dark, crumbly texture means it's ready to use."
+      ]
     },
     {
+      icon: "🔬",
       title: "Disease Identification",
-      description: "Common plant diseases and treatments",
-      icon: "🔬"
+      tips: [
+        "Yellow leaves with green veins = iron or magnesium deficiency — apply foliar spray of Epsom salt.",
+        "Brown spots with yellow halo on tomato/pepper leaves = bacterial spot — remove affected leaves immediately.",
+        "Powdery white coating on leaves = powdery mildew — spray baking soda solution (1 tsp per litre water).",
+        "Wilting despite adequate water, brown inside stem = fusarium wilt — remove entire plant, do not compost.",
+        "Tiny bronze speckling on leaves = thrips damage — check undersides of leaves and apply neem oil."
+      ]
     },
     {
+      icon: "🌾",
       title: "Harvest Timing Guide",
-      description: "Know when your crops are ready",
-      icon: "⏰"
+      tips: [
+        "Tomatoes: harvest when fully coloured but still slightly firm — they continue ripening off the vine.",
+        "Sweet peppers: pick green at full size or wait for full colour change — both stages are correct.",
+        "Okra: harvest pods at 7–10cm — once they go woody (over 12cm) the plant slows production.",
+        "Cucumbers: pick before seeds harden — daily checking during peak season prevents overripe fruit.",
+        "Leafy greens: harvest outer leaves first, always leaving the growing centre intact for regrowth."
+      ]
+    },
+    {
+      icon: "🌱",
+      title: "Seed Saving Basics",
+      tips: [
+        "Save seeds from your healthiest, best-producing plants — never from weak or diseased ones.",
+        "Tomato seeds need fermentation — scoop into water, ferment 2–3 days, rinse and dry thoroughly.",
+        "Pepper seeds: dry inside the pepper on the plant, then extract and air-dry for two weeks.",
+        "Store seeds in paper envelopes inside an airtight jar with a small silica packet to absorb moisture.",
+        "Label everything with crop name, variety, and harvest year — seeds stored dry last 3–5 years."
+      ]
+    },
+    {
+      icon: "🌿",
+      title: "Companion Planting",
+      tips: [
+        "Basil planted beside tomatoes repels thrips and aphids and is said to improve fruit flavour.",
+        "Beans fix nitrogen — plant between corn rows to feed the heavy feeder naturally (the 'Three Sisters').",
+        "Nasturtiums act as a trap crop — aphids prefer them over vegetables, keeping your food crops clean.",
+        "Avoid planting fennel near most vegetables — it inhibits growth of tomatoes, peppers, and beans.",
+        "Chives and garlic planted around brassicas deter cabbage moths and aphids effectively."
+      ]
     }
   ];
+
+  const [openIdx, setOpenIdx] = React.useState(null);
 
   return (
     <motion.div
@@ -399,29 +480,41 @@ function ResourcesTab() {
     >
       <h2>📚 Farming Resources</h2>
       <p style={styles.description}>
-        Educational materials to help you grow better
+        Practical Caribbean farming knowledge — tap any card to expand
       </p>
-      
+
       <div style={styles.resourceGrid}>
         {resources.map((resource, i) => (
           <motion.div
             key={i}
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.5, delay: 0.1 + (i * 0.05) }}
-            whileHover={{ scale: 1.02 }}
-            style={styles.resourceCard}
+            transition={{ duration: 0.4, delay: i * 0.04 }}
+            style={{
+              ...styles.resourceCard,
+              ...(openIdx === i ? styles.resourceCardOpen : {})
+            }}
+            onClick={() => setOpenIdx(openIdx === i ? null : i)}
           >
-            <div style={styles.resourceIcon}>{resource.icon}</div>
-            <h4>{resource.title}</h4>
-            <p style={styles.resourceDesc}>{resource.description}</p>
-            <button style={styles.resourceButton}>Learn More →</button>
+            <div style={styles.resourceCardHeader}>
+              <div style={styles.resourceIcon}>{resource.icon}</div>
+              <h4 style={styles.resourceTitle}>{resource.title}</h4>
+              <span style={styles.chevron}>{openIdx === i ? "▲" : "▼"}</span>
+            </div>
+            {openIdx === i && (
+              <ul style={styles.resourceTips}>
+                {resource.tips.map((tip, j) => (
+                  <li key={j} style={styles.resourceTip}>{tip}</li>
+                ))}
+              </ul>
+            )}
           </motion.div>
         ))}
       </div>
     </motion.div>
   );
 }
+
 
 // Styles
 const styles = {
@@ -669,11 +762,41 @@ const styles = {
   },
   resourceCard: {
     background: "white",
-    padding: "1.5rem",
+    padding: "1.25rem 1.5rem",
     borderRadius: "12px",
-    boxShadow: "0 2px 4px rgba(0,0,0,0.1)",
+    boxShadow: "0 2px 4px rgba(0,0,0,0.08)",
     cursor: "pointer",
-    transition: "all 0.2s"
+    transition: "all 0.2s",
+    border: "2px solid transparent"
+  },
+  resourceCardOpen: {
+    border: "2px solid var(--soil-green)",
+    background: "#f9fdf6"
+  },
+  resourceCardHeader: {
+    display: "flex",
+    alignItems: "center",
+    gap: "0.75rem"
+  },
+  resourceTitle: {
+    flex: 1,
+    margin: 0,
+    fontSize: "1rem",
+    color: "var(--ink-black)"
+  },
+  chevron: {
+    color: "var(--soil-green)",
+    fontSize: "0.75rem"
+  },
+  resourceTips: {
+    marginTop: "1rem",
+    paddingLeft: "1.25rem",
+    lineHeight: "1.85",
+    color: "#444",
+    fontSize: "0.92rem"
+  },
+  resourceTip: {
+    marginBottom: "0.5rem"
   },
   resourceIcon: {
     fontSize: "3rem",

@@ -2,10 +2,77 @@ rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
-    // TEMPORARY - WIDE OPEN FOR TESTING
-    // TODO: Lock down before production launch
-    match /{document=**} {
-      allow read, write: if true;
+
+    // ── Helper: is the request from a signed-in user? ─────────────────────
+    function isSignedIn() {
+      return request.auth != null;
     }
+
+    // ── Helper: is this the document owner? ───────────────────────────────
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    // ── Helper: is the signed-in user the Soil Sista admin? ───────────────
+    // Admin is identified by their email (Google OAuth account).
+    function isAdmin() {
+      return isSignedIn() && request.auth.token.email == "info@soilsista.org";
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // USERS collection
+    //   read  — own doc (Dashboard) OR admin (Adminpanel user list)
+    //   create — own doc only (Onboarding: setDoc with their own uid)
+    //   update — own doc (future profile edits) OR admin (Adminpanel)
+    //   delete — admin only
+    // ─────────────────────────────────────────────────────────────────────
+    match /users/{userId} {
+      allow read:   if isOwner(userId) || isAdmin();
+      allow create: if isOwner(userId);
+      allow update: if isOwner(userId) || isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // ACTIVITIES collection
+    //   read  — own activities (Dashboard) OR admin (Adminpanel)
+    //   create — own activities: Dashboard, Onboarding, CropPlanner, Contact
+    //            Cloud Functions write here too (server-side, bypasses rules)
+    //   update — admin only (marking read, etc.)
+    //   delete — admin only (cleanup — Cloud Functions also delete server-side)
+    // ─────────────────────────────────────────────────────────────────────
+    match /activities/{activityId} {
+      allow read:   if isSignedIn() && (
+                      resource.data.userId == request.auth.uid || isAdmin()
+                    );
+      allow create: if isSignedIn() && (
+                      request.resource.data.userId == request.auth.uid || isAdmin()
+                    );
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // CONTACT_MESSAGES collection
+    //   Publicly writable (Contact form — user may not be signed in)
+    //   Only admin can read / update / delete
+    // ─────────────────────────────────────────────────────────────────────
+    match /contact_messages/{messageId} {
+      allow create: if true;   // Public contact form — no auth required
+      allow read:   if isAdmin();
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // CROPS collection (future — populated via seeding script)
+    //   Read-only for any signed-in user (CropPlanner fetches crop data)
+    //   Write only via admin or Cloud Functions (server-side bypass)
+    // ─────────────────────────────────────────────────────────────────────
+    match /crops/{cropId} {
+      allow read:  if isSignedIn();
+      allow write: if isAdmin();
+    }
+
   }
 }
