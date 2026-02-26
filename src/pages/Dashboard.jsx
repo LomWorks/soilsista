@@ -461,7 +461,7 @@ function ResourcesTab() {
       title: "Companion Planting",
       tips: [
         "Basil planted beside tomatoes repels thrips and aphids and is said to improve fruit flavour.",
-        "Beans fix nitrogen — plant between corn rows to feed the heavy feeder naturally (the 'Three Sisters').",
+        "Beans fix nitrogen — plant between corn rows to feed the heavy feeder naturally (the \'Three Sisters\').",
         "Nasturtiums act as a trap crop — aphids prefer them over vegetables, keeping your food crops clean.",
         "Avoid planting fennel near most vegetables — it inhibits growth of tomatoes, peppers, and beans.",
         "Chives and garlic planted around brassicas deter cabbage moths and aphids effectively."
@@ -469,7 +469,14 @@ function ResourcesTab() {
     }
   ];
 
-  const [openIdx, setOpenIdx] = React.useState(null);
+  const [activeResource, setActiveResource] = React.useState(null);
+
+  // Close modal on Escape key
+  React.useEffect(() => {
+    const handler = (e) => { if (e.key === "Escape") setActiveResource(null); };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, []);
 
   return (
     <motion.div
@@ -480,7 +487,7 @@ function ResourcesTab() {
     >
       <h2>📚 Farming Resources</h2>
       <p style={styles.description}>
-        Practical Caribbean farming knowledge — tap any card to expand
+        Practical Caribbean farming knowledge — tap any card to learn more
       </p>
 
       <div style={styles.resourceGrid}>
@@ -490,27 +497,59 @@ function ResourcesTab() {
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.4, delay: i * 0.04 }}
-            style={{
-              ...styles.resourceCard,
-              ...(openIdx === i ? styles.resourceCardOpen : {})
-            }}
-            onClick={() => setOpenIdx(openIdx === i ? null : i)}
+            whileHover={{ y: -3, boxShadow: "0 6px 20px rgba(0,0,0,0.12)" }}
+            style={styles.resourceCard}
+            onClick={() => setActiveResource(resource)}
           >
             <div style={styles.resourceCardHeader}>
               <div style={styles.resourceIcon}>{resource.icon}</div>
               <h4 style={styles.resourceTitle}>{resource.title}</h4>
-              <span style={styles.chevron}>{openIdx === i ? "▲" : "▼"}</span>
+              <span style={styles.chevron}>▶</span>
             </div>
-            {openIdx === i && (
-              <ul style={styles.resourceTips}>
-                {resource.tips.map((tip, j) => (
-                  <li key={j} style={styles.resourceTip}>{tip}</li>
-                ))}
-              </ul>
-            )}
           </motion.div>
         ))}
       </div>
+
+      {/* Modal overlay */}
+      {activeResource && (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          style={styles.modalOverlay}
+          onClick={() => setActiveResource(null)}
+        >
+          <motion.div
+            initial={{ opacity: 0, scale: 0.92, y: 20 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            transition={{ type: "spring", damping: 22, stiffness: 280 }}
+            style={styles.modal}
+            onClick={e => e.stopPropagation()}
+          >
+            {/* X close button */}
+            <button
+              onClick={() => setActiveResource(null)}
+              style={styles.modalClose}
+              aria-label="Close"
+            >
+              ✕
+            </button>
+
+            {/* Header */}
+            <div style={styles.modalHeader}>
+              <span style={styles.modalIcon}>{activeResource.icon}</span>
+              <h3 style={styles.modalTitle}>{activeResource.title}</h3>
+            </div>
+
+            {/* Tips */}
+            <ul style={styles.modalTips}>
+              {activeResource.tips.map((tip, j) => (
+                <li key={j} style={styles.modalTip}>{tip}</li>
+              ))}
+            </ul>
+          </motion.div>
+        </motion.div>
+      )}
     </motion.div>
   );
 }
@@ -797,6 +836,73 @@ const styles = {
   },
   resourceTip: {
     marginBottom: "0.5rem"
+  },
+
+  // Modal styles
+  modalOverlay: {
+    position: "fixed",
+    top: 0, left: 0, right: 0, bottom: 0,
+    background: "rgba(0,0,0,0.45)",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    zIndex: 1000,
+    padding: "1.5rem"
+  },
+  modal: {
+    background: "white",
+    borderRadius: "16px",
+    padding: "2rem",
+    maxWidth: "480px",
+    width: "100%",
+    maxHeight: "80vh",
+    overflowY: "auto",
+    position: "relative",
+    boxShadow: "0 20px 60px rgba(0,0,0,0.25)"
+  },
+  modalClose: {
+    position: "absolute",
+    top: "1rem",
+    right: "1rem",
+    background: "#f0f0f0",
+    border: "none",
+    borderRadius: "50%",
+    width: "32px",
+    height: "32px",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    cursor: "pointer",
+    fontSize: "0.9rem",
+    color: "#555",
+    fontWeight: "bold",
+    lineHeight: 1
+  },
+  modalHeader: {
+    display: "flex",
+    alignItems: "center",
+    gap: "0.75rem",
+    marginBottom: "1.5rem",
+    paddingRight: "2rem"
+  },
+  modalIcon: {
+    fontSize: "2rem"
+  },
+  modalTitle: {
+    margin: 0,
+    fontSize: "1.2rem",
+    color: "var(--soil-green)",
+    fontWeight: "700"
+  },
+  modalTips: {
+    paddingLeft: "1.25rem",
+    margin: 0
+  },
+  modalTip: {
+    color: "#444",
+    lineHeight: "1.7",
+    marginBottom: "0.9rem",
+    fontSize: "0.95rem"
   },
   resourceIcon: {
     fontSize: "3rem",
