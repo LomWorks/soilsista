@@ -282,9 +282,9 @@ export default function WeatherWidget({ location, userData }) {
         </ul>
       </motion.div>
 
-      <p style={styles.footer}>
-        {weather.island} · Tomorrow.io · Updated {new Date(weather.fetchedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-      </p>
+     <p style={styles.footer}>
+  {weather.island} · Updated {new Date(weather.fetchedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+</p>
     </div>
   );
 }
