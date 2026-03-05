@@ -1,6 +1,7 @@
 const fetch = require('node-fetch');
+const functions = require('firebase-functions/v1');
+const admin = require('firebase-admin');
 const {
-  WEATHER_API_URL,
   LOCATIONS,
   HEAVY_RAIN_THRESHOLD,
   HIGH_TEMP_THRESHOLD,
@@ -8,190 +9,239 @@ const {
   CROP_THRESHOLDS
 } = require('../config/constants');
 
-/**
- * Fetch weather data from Open-Meteo API (FREE - no key needed!)
- */
+const CACHE_TTL_MS = 30 * 60 * 1000;
+
+function describeTomorrowCode(code) {
+  const map = {
+    1000: 'Clear sky', 1100: 'Mostly clear', 1101: 'Partly cloudy',
+    1102: 'Mostly cloudy', 1001: 'Cloudy', 2000: 'Fog',
+    4000: 'Drizzle', 4001: 'Rain', 4200: 'Light rain',
+    4201: 'Heavy rain', 8000: 'Thunderstorm',
+  };
+  return map[code] || 'Unknown';
+}
+
+// ── Shared fetch logic ────────────────────────────────────────────────────────
+
+async function fetchFromTomorrowIO(island) {
+  const apiKey = process.env.TOMORROW_KEY;
+  if (!apiKey) throw new Error('TOMORROW_KEY environment variable not set');
+
+  const coords = LOCATIONS[island] || LOCATIONS['Antigua'];
+  const fields = [
+    'temperature', 'temperatureMax', 'temperatureMin',
+    'humidity', 'windSpeed', 'windGust',
+    'precipitationIntensity', 'precipitationProbability', 'weatherCode',
+  ].join(',');
+
+  const url =
+    `https://api.tomorrow.io/v4/timelines` +
+    `?location=${coords.lat},${coords.lon}` +
+    `&fields=${fields}&units=metric` +
+    `&timesteps=current,1d&startTime=now&endTime=nowPlus7d` +
+    `&apikey=${apiKey}`;
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 10000);
+  const response = await fetch(url, { signal: controller.signal });
+  clearTimeout(timeout);
+
+  if (!response.ok) throw new Error(`Tomorrow.io ${response.status}: ${await response.text()}`);
+
+  const raw = await response.json();
+  const timelines = raw.data.timelines;
+  const currentVals = timelines.find(t => t.timestep === 'current').intervals[0].values;
+  const daily = timelines.find(t => t.timestep === '1d').intervals.slice(0, 7);
+
+  return {
+    island,
+    current: {
+      temp:      Math.round(currentVals.temperature),
+      humidity:  currentVals.humidity,
+      windSpeed: Math.round(currentVals.windSpeed),
+      windGust:  Math.round(currentVals.windGust || currentVals.windSpeed),
+      rainfall:  parseFloat((currentVals.precipitationIntensity || 0).toFixed(1)),
+      label:     describeTomorrowCode(currentVals.weatherCode),
+      emoji:     getEmoji(currentVals.weatherCode),
+    },
+    forecast: daily.map(i => ({
+      day:      new Date(i.startTime).toLocaleDateString('en-US', { weekday: 'short', timeZone: 'America/Antigua' }),
+      high:     Math.round(i.values.temperatureMax ?? i.values.temperature),
+      low:      Math.round(i.values.temperatureMin ?? i.values.temperature),
+      rain:     parseFloat((i.values.precipitationIntensity || 0).toFixed(1)),
+      rainProb: i.values.precipitationProbability || 0,
+      label:    describeTomorrowCode(i.values.weatherCode),
+      emoji:    getEmoji(i.values.weatherCode),
+    })),
+    fetchedAt: Date.now(),
+  };
+}
+
+function getEmoji(code) {
+  if (code === 1000) return '☀️';
+  if (code <= 1101) return '⛅';
+  if (code <= 1102) return '🌥️';
+  if (code === 1001) return '☁️';
+  if (code === 2000) return '🌫️';
+  if (code <= 4200) return '🌦️';
+  if (code <= 4201) return '🌧️';
+  if (code === 8000) return '⛈️';
+  return '🌤️';
+}
+
+// ── HTTP endpoint — called by WeatherWidget frontend ─────────────────────────
+
+const getWeather = functions
+  .runWith({ timeoutSeconds: 20, memory: '256MB' })
+  .https.onRequest(async (req, res) => {
+    res.set('Access-Control-Allow-Origin', '*');
+    res.set('Access-Control-Allow-Methods', 'GET, OPTIONS');
+    if (req.method === 'OPTIONS') { res.status(204).send(''); return; }
+
+    const island = req.query.island || 'Antigua';
+    const cacheKey = `weather_cache_${island.toLowerCase().replace(/\s/g, '_')}`;
+    const cacheRef = admin.firestore().collection('_cache').doc(cacheKey);
+
+    try {
+      const cacheSnap = await cacheRef.get();
+      if (cacheSnap.exists && Date.now() - cacheSnap.data().fetchedAt < CACHE_TTL_MS) {
+        res.set('X-Cache', 'HIT');
+        res.json(cacheSnap.data().data);
+        return;
+      }
+
+      const weatherData = await fetchFromTomorrowIO(island);
+      await cacheRef.set({ data: weatherData, fetchedAt: Date.now() });
+      res.set('X-Cache', 'MISS');
+      res.json(weatherData);
+
+    } catch (err) {
+      console.error('getWeather error:', err.message);
+      // Stale cache fallback
+      try {
+        const stale = await cacheRef.get();
+        if (stale.exists) { res.set('X-Cache', 'STALE'); res.json({ ...stale.data().data, stale: true }); return; }
+      } catch (_) {}
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+// ── Used by dailyTasks — checks cache first, calls Tomorrow.io if stale ──────
+
 async function fetchWeather(location) {
+  const island = location?.island || 'Antigua';
+  const cacheKey = `weather_cache_${island.toLowerCase().replace(/\s/g, '_')}`;
+  const cacheRef = admin.firestore().collection('_cache').doc(cacheKey);
+
   try {
-    const coords = LOCATIONS[location.island] || LOCATIONS['Antigua'];
+    const cacheSnap = await cacheRef.get();
+    if (cacheSnap.exists && Date.now() - cacheSnap.data().fetchedAt < CACHE_TTL_MS) {
+      console.log(`[weather.js] Cache hit for ${island}`);
+      return transformForAnalysis(cacheSnap.data().data);
+    }
 
-    const url = `${WEATHER_API_URL}?` +
-      `latitude=${coords.lat}&` +
-      `longitude=${coords.lon}&` +
-      `current=temperature_2m,relative_humidity_2m,precipitation,wind_speed_10m&` +
-      `daily=temperature_2m_max,temperature_2m_min,precipitation_sum&` +
-      `timezone=America/Antigua&` +
-      `forecast_days=7`;
+    const weatherData = await fetchFromTomorrowIO(island);
+    await cacheRef.set({ data: weatherData, fetchedAt: Date.now() });
+    console.log(`[weather.js] Fetched from Tomorrow.io for ${island}`);
+    return transformForAnalysis(weatherData);
 
-    const response = await fetch(url);
-    const data = await response.json();
-
-    return {
-      current: {
-        temp: Math.round(data.current.temperature_2m),
-        humidity: data.current.relative_humidity_2m,
-        windSpeed: Math.round(data.current.wind_speed_10m),
-        precipitation: data.current.precipitation
-      },
-      forecast: data.daily.precipitation_sum.slice(0, 7),
-      maxTemps: data.daily.temperature_2m_max.slice(0, 7),
-      minTemps: data.daily.temperature_2m_min.slice(0, 7)
-    };
-  } catch (error) {
-    console.error('Weather fetch error:', error);
+  } catch (err) {
+    console.error('[weather.js] fetchWeather error:', err.message);
+    try {
+      const stale = await cacheRef.get();
+      if (stale.exists) return transformForAnalysis(stale.data().data);
+    } catch (_) {}
     return null;
   }
 }
 
-/**
- * Derive the tightest thresholds for a user's active crop set.
- * crops: string[] — e.g. ["Tomatoes", "Okra", "Sweet Pepper"]
- * Returns a threshold object using the most conservative values across all crops,
- * falling back to global constants when a crop isn't found in CROP_THRESHOLDS.
- */
-function getThresholdsForCrops(crops) {
-  // Start with global fallbacks
-  let thresholds = {
-    heatStress:          HIGH_TEMP_THRESHOLD,
-    coldStress:          5,
-    rainMm:              HEAVY_RAIN_THRESHOLD,
-    windAdvisory:        30,
-    windCritical:        55,
-    droughtEstablished:  DROUGHT_DAYS_THRESHOLD * 24, // convert days → hours
-    rhRisk:              85
+function transformForAnalysis(data) {
+  return {
+    current: {
+      temp:          data.current.temp,
+      humidity:      data.current.humidity,
+      windSpeed:     data.current.windSpeed,
+      precipitation: data.current.rainfall,
+    },
+    forecast:  data.forecast.map(d => d.rain),
+    maxTemps:  data.forecast.map(d => d.high),
+    minTemps:  data.forecast.map(d => d.low),
+    rainProbs: data.forecast.map(d => d.rainProb),
   };
-
-  if (!crops || crops.length === 0) return thresholds;
-
-  crops.forEach(cropName => {
-    const key = cropName.toLowerCase().trim();
-    const t = CROP_THRESHOLDS[key];
-    if (!t) return; // not in lookup, global fallback still applies
-
-    // Most conservative = lowest heat/rain/wind/drought, highest cold
-    thresholds.heatStress         = Math.min(thresholds.heatStress,         t.heatStress);
-    thresholds.coldStress         = Math.max(thresholds.coldStress,          t.coldStress);
-    thresholds.rainMm             = Math.min(thresholds.rainMm,              t.rainMm);
-    thresholds.windAdvisory       = Math.min(thresholds.windAdvisory,        t.windAdvisory);
-    thresholds.windCritical       = Math.min(thresholds.windCritical,        t.windCritical);
-    thresholds.droughtEstablished = Math.min(thresholds.droughtEstablished,  t.droughtEstablished);
-    thresholds.rhRisk             = Math.max(thresholds.rhRisk,              t.rhRisk);
-  });
-
-  return thresholds;
 }
 
-/**
- * Analyse weather data and generate farming alerts.
- * Pass crops[] to get crop-specific thresholds instead of global fallbacks.
- */
+// ── Threshold + alert logic ───────────────────────────────────────────────────
+
+function getThresholdsForCrops(crops) {
+  let t = {
+    heatStress: HIGH_TEMP_THRESHOLD, coldStress: 5,
+    rainMm: HEAVY_RAIN_THRESHOLD, windAdvisory: 30, windCritical: 55,
+    droughtEstablished: DROUGHT_DAYS_THRESHOLD * 24, rhRisk: 85
+  };
+  if (!crops || crops.length === 0) return t;
+  crops.forEach(cropName => {
+    const key = cropName.toLowerCase().replace(/\s*\(.*\)/, '').trim();
+    const c = CROP_THRESHOLDS[key];
+    if (!c) return;
+    t.heatStress         = Math.min(t.heatStress,         c.heatStress);
+    t.coldStress         = Math.max(t.coldStress,          c.coldStress);
+    t.rainMm             = Math.min(t.rainMm,              c.rainMm);
+    t.windAdvisory       = Math.min(t.windAdvisory,        c.windAdvisory);
+    t.windCritical       = Math.min(t.windCritical,        c.windCritical);
+    t.droughtEstablished = Math.min(t.droughtEstablished,  c.droughtEstablished);
+    t.rhRisk             = Math.max(t.rhRisk,              c.rhRisk);
+  });
+  return t;
+}
+
 function analyzeWeather(weather, crops = []) {
   const alerts = [];
   if (!weather) return alerts;
 
   const t = getThresholdsForCrops(crops);
-
-  const cropLabel = crops && crops.length > 0
-    ? `your ${crops.slice(0, 2).join(' & ')}${crops.length > 2 ? ' & more' : ''}`
+  const cropLabel = crops.length > 0
+    ? `your ${crops.slice(0, 2).map(c => c.replace(/\s*\(.*\)/, '').trim()).join(' & ')}${crops.length > 2 ? ' & more' : ''}`
     : 'your crops';
 
-  // ── Heavy rain in next 3 days ──────────────────────────────────────────────
-  const totalRain3d = weather.forecast.slice(0, 3).reduce((sum, r) => sum + r, 0);
-  if (totalRain3d > t.rainMm * 3) {
-    alerts.push({
-      type: 'heavy_rain',
-      severity: 'warning',
+  const totalRain3d = weather.forecast.slice(0, 3).reduce((s, r) => s + r, 0);
+  const maxTemp3d   = Math.max(...weather.maxTemps.slice(0, 3));
+
+  if (totalRain3d > t.rainMm * 3)
+    alerts.push({ type: 'heavy_rain', severity: 'warning', icon: '🌧️',
       title: 'Heavy Rainfall Expected',
-      message: `Heavy rain forecasted (${Math.round(totalRain3d)}mm over 3 days) — above the ${t.rainMm}mm/day threshold for ${cropLabel}. Check drainage, consider early harvest of mature crops, and delay transplanting.`,
-      icon: '🌧️',
-      farmingAdvice: [
-        'Check and clear drainage channels',
-        'Harvest mature leafy crops and peppers before the rain hits',
-        'Delay transplanting seedlings until rain passes',
-        'Secure trellises and support structures'
-      ]
-    });
-  }
+      message: `Heavy rain forecasted (${Math.round(totalRain3d)}mm over 3 days) — above the ${t.rainMm}mm threshold for ${cropLabel}.`,
+      farmingAdvice: ['Clear drainage channels', 'Harvest mature crops before rain hits', 'Delay transplanting', 'Secure trellises'] });
 
-  // ── High temperature ───────────────────────────────────────────────────────
-  const maxTemp3d = Math.max(...weather.maxTemps.slice(0, 3));
-  if (maxTemp3d > t.heatStress) {
-    alerts.push({
-      type: 'high_temp',
-      severity: 'warning',
+  if (maxTemp3d > t.heatStress)
+    alerts.push({ type: 'high_temp', severity: 'warning', icon: '🌡️',
       title: 'Heat Stress Alert',
-      message: `Temperatures expected to reach ${maxTemp3d}°C — above the ${t.heatStress}°C stress threshold for ${cropLabel}. Irrigate early morning and provide shade where possible.`,
-      icon: '🌡️',
-      farmingAdvice: [
-        'Water early morning or late evening only',
-        'Apply mulch to retain soil moisture and reduce root-zone heat',
-        'Provide temporary shade cloth for sensitive crops',
-        'Monitor for wilting twice daily'
-      ]
-    });
-  }
+      message: `Temperatures reaching ${maxTemp3d}°C — above the ${t.heatStress}°C threshold for ${cropLabel}.`,
+      farmingAdvice: ['Water at dawn or dusk only', 'Apply mulch to root zone', 'Add shade cloth', 'Monitor for wilting twice daily'] });
 
-  // ── Dry / drought conditions ───────────────────────────────────────────────
-  // Convert droughtEstablished hours → days for comparison with forecast array (daily)
   const droughtDays = Math.ceil(t.droughtEstablished / 24);
-  const dryDays = weather.forecast.slice(0, droughtDays).every(r => r < 2);
-  if (dryDays) {
-    alerts.push({
-      type: 'drought',
-      severity: 'warning',
+  if (weather.forecast.slice(0, droughtDays).every(r => r < 2))
+    alerts.push({ type: 'drought', severity: 'warning', icon: '☀️',
       title: 'Dry Conditions Alert',
-      message: `No significant rainfall expected for ${droughtDays} days — ${cropLabel} may show drought stress. Increase irrigation frequency and add mulch.`,
-      icon: '☀️',
-      farmingAdvice: [
-        'Increase watering frequency — do not wait for visible wilting',
-        'Water deeply at root zone, not surface',
-        'Apply mulch to reduce evaporation',
-        'Prioritise fruiting crops (peppers, tomatoes, cucumbers) for water'
-      ]
-    });
-  }
+      message: `No significant rain expected for ${droughtDays} days — ${cropLabel} will need irrigation.`,
+      farmingAdvice: ['Increase watering frequency', 'Water deeply at root zone', 'Mulch to reduce evaporation', 'Prioritise fruiting crops'] });
 
-  // ── Wind advisory ──────────────────────────────────────────────────────────
-  // Open-Meteo returns current wind; check if it exceeds crop advisory threshold
   if (weather.current.windSpeed > t.windAdvisory) {
-    const severity = weather.current.windSpeed > t.windCritical ? 'warning' : 'info';
-    alerts.push({
-      type: 'wind',
-      severity,
-      title: weather.current.windSpeed > t.windCritical ? 'Critical Wind Warning' : 'Wind Advisory',
-      message: `Current winds at ${weather.current.windSpeed} km/h — ${severity === 'warning' ? 'above the critical damage threshold' : 'above the advisory threshold'} for ${cropLabel}.`,
-      icon: '💨',
-      farmingAdvice: [
-        'Stake and tie tall crops (corn, tomatoes, peppers)',
-        'Delay transplanting until winds ease',
-        'Check and reinforce trellises and row covers',
-        weather.current.windSpeed > t.windCritical ? 'Consider emergency harvest of mature produce' : 'Monitor conditions hourly'
-      ]
-    });
+    const sev = weather.current.windSpeed > t.windCritical ? 'warning' : 'info';
+    alerts.push({ type: 'wind', severity: sev, icon: '💨',
+      title: sev === 'warning' ? 'Critical Wind Warning' : 'Wind Advisory',
+      message: `Winds at ${weather.current.windSpeed} km/h — ${sev === 'warning' ? 'above critical threshold' : 'above advisory threshold'} for ${cropLabel}.`,
+      farmingAdvice: ['Stake tall crops', 'Delay transplanting', 'Check trellises',
+        sev === 'warning' ? 'Consider emergency harvest' : 'Monitor hourly'] });
   }
 
-  // ── Good planting conditions ───────────────────────────────────────────────
   const avgTemp3d = weather.maxTemps.slice(0, 3).reduce((a, b) => a + b, 0) / 3;
-  const moderateRain = totalRain3d > 5 && totalRain3d <= t.rainMm * 2;
-  const comfortableTemp = avgTemp3d >= 24 && avgTemp3d <= t.heatStress - 2;
-
-  if (comfortableTemp && moderateRain) {
-    alerts.push({
-      type: 'good_conditions',
-      severity: 'info',
+  if (alerts.length === 0 && avgTemp3d >= 24 && avgTemp3d <= t.heatStress - 2 && totalRain3d > 5 && totalRain3d <= t.rainMm * 2)
+    alerts.push({ type: 'good_conditions', severity: 'info', icon: '🌱',
       title: 'Good Planting Conditions',
-      message: `Ideal conditions this week — moderate rainfall and temperatures well within range for ${cropLabel}.`,
-      icon: '🌱',
-      farmingAdvice: [
-        'Good time to transplant seedlings',
-        'Sow succession plantings directly in garden',
-        'Apply compost before planting',
-        'Plant heat-loving crops (peppers, tomatoes, okra)'
-      ]
-    });
-  }
+      message: `Ideal conditions this week — moderate rainfall and temperatures within range for ${cropLabel}.`,
+      farmingAdvice: ['Good time to transplant', 'Sow succession plantings', 'Apply compost', 'Plant heat-loving crops'] });
 
   return alerts;
 }
 
-module.exports = { fetchWeather, analyzeWeather, getThresholdsForCrops };
+module.exports = { getWeather, fetchWeather, analyzeWeather, getThresholdsForCrops };

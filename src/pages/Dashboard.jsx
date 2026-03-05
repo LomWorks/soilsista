@@ -461,7 +461,7 @@ function ResourcesTab() {
       title: "Companion Planting",
       tips: [
         "Basil planted beside tomatoes repels thrips and aphids and is said to improve fruit flavour.",
-        "Beans fix nitrogen — plant between corn rows to feed the heavy feeder naturally (the \'Three Sisters\').",
+        "Beans fix nitrogen — plant between corn rows to feed the heavy feeder naturally (the 'Three Sisters').",
         "Nasturtiums act as a trap crop — aphids prefer them over vegetables, keeping your food crops clean.",
         "Avoid planting fennel near most vegetables — it inhibits growth of tomatoes, peppers, and beans.",
         "Chives and garlic planted around brassicas deter cabbage moths and aphids effectively."
