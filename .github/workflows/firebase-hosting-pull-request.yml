@@ -3,11 +3,13 @@ on:
   push:
     branches:
       - main
+
 jobs:
   build_and_deploy:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - run: npm ci && npm run build
 
       - name: Install function dependencies
@@ -16,9 +18,9 @@ jobs:
       - name: Write functions .env
         run: echo "TOMORROW_KEY=${{ secrets.TOMORROW_KEY }}" > functions/.env
 
-      - name: Deploy to Firebase
+      - name: Deploy Functions
         uses: w9jds/firebase-action@master
         with:
-          args: deploy --only functions,hosting
+          args: deploy --only functions
         env:
           GCP_SA_KEY: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_SOIL_SISTA }}
