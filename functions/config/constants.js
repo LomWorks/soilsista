@@ -1,10 +1,7 @@
 // Configuration constants for Cloud Functions
 
 module.exports = {
-  // Weather API (Open-Meteo - FREE, no key needed!)
-  WEATHER_API_URL: 'https://api.open-meteo.com/v1/forecast',
-
-  // App URLs — update to soilsista.org once DNS is live
+  // App URLs
   APP_URL: 'https://soilsista.org',
   ADMIN_URL: 'https://soilsista.org/admin',
   DASHBOARD_URL: 'https://soilsista.org/dashboard',
@@ -20,12 +17,76 @@ module.exports = {
   // Cleanup settings
   ACTIVITY_RETENTION_DAYS: 30,
 
-  // Location coordinates for Caribbean islands
+  // ── Location coordinates ────────────────────────────────────────────────────
+  // Keys must match every possible value that can come out of Firestore's
+  // location.island field. Add variants whenever a new onboarding option is added.
+  // Lookup order in weather.js: exact → case-insensitive → partial → null (400).
   LOCATIONS: {
-    'Antigua':  { lat: 17.0608, lon: -61.7964 },
-    'Barbuda':  { lat: 17.6274, lon: -61.7713 },
-    'Nassau':   { lat: 25.0443, lon: -77.3504 },
-    'Freeport': { lat: 26.5384, lon: -78.6957 }
+    // Antigua & Barbuda
+    'Antigua':                    { lat: 17.0608,  lon: -61.7964 },
+    'Barbuda':                    { lat: 17.6274,  lon: -61.7713 },
+
+    // Bahamas — Nassau / New Providence (multiple Firestore variants)
+    'Nassau':                     { lat: 25.0443,  lon: -77.3504 },
+    'New Providence':             { lat: 25.0443,  lon: -77.3504 },
+    'New Providence (Nassau)':    { lat: 25.0443,  lon: -77.3504 },
+
+    // Bahamas — Grand Bahama
+    'Freeport':                   { lat: 26.5384,  lon: -78.6957 },
+    'Grand Bahama':               { lat: 26.5384,  lon: -78.6957 },
+    'Grand Bahama (Freeport)':    { lat: 26.5384,  lon: -78.6957 },
+
+    // Jamaica
+    'Jamaica':                    { lat: 17.9970,  lon: -76.7936 },
+    'Kingston':                   { lat: 17.9970,  lon: -76.7936 },
+    'Kingston (Jamaica)':         { lat: 17.9970,  lon: -76.7936 },
+    'Montego Bay':                { lat: 18.4762,  lon: -77.8939 },
+
+    // Trinidad & Tobago
+    'Trinidad':                   { lat: 10.6918,  lon: -61.2225 },
+    'Tobago':                     { lat: 11.1871,  lon: -60.6898 },
+    'Port of Spain':              { lat: 10.6540,  lon: -61.5190 },
+    'Trinidad and Tobago':        { lat: 10.6918,  lon: -61.2225 },
+
+    // Barbados
+    'Barbados':                   { lat: 13.1939,  lon: -59.5432 },
+    'Bridgetown':                 { lat: 13.1000,  lon: -59.6167 },
+    'Bridgetown (Barbados)':      { lat: 13.1000,  lon: -59.6167 },
+
+    // St. Lucia
+    'Saint Lucia':                { lat: 13.9094,  lon: -60.9789 },
+    'St. Lucia':                  { lat: 13.9094,  lon: -60.9789 },
+    'St Lucia':                   { lat: 13.9094,  lon: -60.9789 },
+    'Castries':                   { lat: 14.0101,  lon: -60.9875 },
+
+    // Grenada
+    'Grenada':                    { lat: 12.1165,  lon: -61.6790 },
+    "St. George's":               { lat: 12.0564,  lon: -61.7485 },
+
+    // St. Vincent & the Grenadines
+    'Saint Vincent':              { lat: 13.2528,  lon: -61.1971 },
+    'St. Vincent':                { lat: 13.2528,  lon: -61.1971 },
+    'St Vincent':                 { lat: 13.2528,  lon: -61.1971 },
+    'Kingstown':                  { lat: 13.1587,  lon: -61.2248 },
+
+    // Dominica
+    'Dominica':                   { lat: 15.3150,  lon: -61.3999 },
+    'Roseau':                     { lat: 15.3017,  lon: -61.3881 },
+
+    // St. Kitts & Nevis
+    'Saint Kitts':                { lat: 17.3578,  lon: -62.7830 },
+    'St. Kitts':                  { lat: 17.3578,  lon: -62.7830 },
+    'Nevis':                      { lat: 17.1570,  lon: -62.5793 },
+    'Basseterre':                 { lat: 17.2948,  lon: -62.7261 },
+
+    // Guyana
+    'Guyana':                     { lat: 4.8604,   lon: -58.9302 },
+    'Georgetown':                 { lat: 6.8013,   lon: -58.1551 },
+    'Georgetown (Guyana)':        { lat: 6.8013,   lon: -58.1551 },
+
+    // Belize
+    'Belize':                     { lat: 17.1899,  lon: -88.4976 },
+    'Belize City':                { lat: 17.2510,  lon: -88.7590 },
   },
 
   // ─── Per-crop weather stress thresholds ───────────────────────────────────
@@ -53,7 +114,6 @@ module.exports = {
     'watermelon':   { heatStress: 36, coldStress: 15, rainMm: 30, windAdvisory: 45, windCritical: 65, droughtTransplant: 24, droughtEstablished: 72, rhRisk: 85 },
     'corn':         { heatStress: 35, coldStress: 10, rainMm: 35, windAdvisory: 40, windCritical: 55, droughtTransplant: 24, droughtEstablished: 72, rhRisk: 90 },
     'okra':         { heatStress: 37, coldStress: 15, rainMm: 35, windAdvisory: 40, windCritical: 55, droughtTransplant: 24, droughtEstablished: 72, rhRisk: 90 },
-    'cabbage':      { heatStress: 24, coldStress:  5, rainMm: 25, windAdvisory: 40, windCritical: 60, droughtTransplant: 18, droughtEstablished: 48, rhRisk: 85 },
     'kale':         { heatStress: 29, coldStress:  2, rainMm: 20, windAdvisory: 35, windCritical: 50, droughtTransplant: 18, droughtEstablished: 48, rhRisk: 85 },
     'lettuce':      { heatStress: 24, coldStress:  2, rainMm: 15, windAdvisory: 30, windCritical: 45, droughtTransplant: 12, droughtEstablished: 36, rhRisk: 90 },
     'amaranth':     { heatStress: 36, coldStress: 15, rainMm: 30, windAdvisory: 35, windCritical: 50, droughtTransplant: 18, droughtEstablished: 48, rhRisk: 85 },
@@ -61,7 +121,6 @@ module.exports = {
     'arugula':      { heatStress: 25, coldStress:  2, rainMm: 15, windAdvisory: 30, windCritical: 45, droughtTransplant: 12, droughtEstablished: 36, rhRisk: 85 },
     'radish':       { heatStress: 25, coldStress:  2, rainMm: 20, windAdvisory: 45, windCritical: 60, droughtTransplant: 12, droughtEstablished: 36, rhRisk: 90 },
     'onion':        { heatStress: 30, coldStress:  5, rainMm: 15, windAdvisory: 45, windCritical: 60, droughtTransplant: 24, droughtEstablished: 72, rhRisk: 90 },
-    // Crops not in improved sheet — use sensible Caribbean defaults
     'eggplant':     { heatStress: 35, coldStress: 12, rainMm: 20, windAdvisory: 35, windCritical: 55, droughtTransplant: 24, droughtEstablished: 60, rhRisk: 85 },
     'pumpkin':      { heatStress: 35, coldStress: 12, rainMm: 25, windAdvisory: 40, windCritical: 60, droughtTransplant: 24, droughtEstablished: 72, rhRisk: 85 },
     'sweet potato': { heatStress: 35, coldStress: 12, rainMm: 30, windAdvisory: 40, windCritical: 60, droughtTransplant: 24, droughtEstablished: 72, rhRisk: 85 },
