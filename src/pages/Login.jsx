@@ -86,7 +86,7 @@ export default function Login() {
       >
         <AnimatePresence mode="wait">
 
-          {/* ── Sign In ───────────────────────────────────────────────────── */}
+          {/* Sign In */}
           {view === "login" && (
             <motion.div
               key="login"
@@ -115,16 +115,7 @@ export default function Login() {
                 </div>
 
                 <div style={styles.inputGroup}>
-                  <div style={styles.labelRow}>
-                    <label style={styles.label}>Password</label>
-                    <button
-                      type="button"
-                      onClick={() => { setError(""); setView("forgot"); }}
-                      style={styles.forgotLink}
-                    >
-                      Forgot password?
-                    </button>
-                  </div>
+                  <label style={styles.label}>Password</label>
                   <input
                     type="password"
                     value={password}
@@ -134,6 +125,15 @@ export default function Login() {
                     required
                     autoComplete="current-password"
                   />
+                  <div style={styles.forgotRow}>
+                    <button
+                      type="button"
+                      onClick={() => { setError(""); setView("forgot"); }}
+                      style={styles.forgotLink}
+                    >
+                      Forgot password?
+                    </button>
+                  </div>
                 </div>
 
                 {error && (
@@ -162,7 +162,7 @@ export default function Login() {
             </motion.div>
           )}
 
-          {/* ── Forgot Password ───────────────────────────────────────────── */}
+          {/* Forgot Password */}
           {view === "forgot" && (
             <motion.div
               key="forgot"
@@ -218,7 +218,7 @@ export default function Login() {
             </motion.div>
           )}
 
-          {/* ── Confirmation ──────────────────────────────────────────────── */}
+          {/* Confirmation */}
           {view === "forgot-sent" && (
             <motion.div
               key="forgot-sent"
@@ -294,15 +294,17 @@ const styles = {
     flexDirection: "column",
     gap: "0.5rem",
   },
-  labelRow: {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center",
-  },
   label: {
     fontWeight: "600",
     color: "var(--ink-black)",
     fontSize: "0.95rem",
+  },
+  
+  // forgotRow sits below the password input, right-aligned
+  forgotRow: {
+    display: "flex",
+    justifyContent: "flex-end",
+    marginTop: "0.25rem",
   },
   forgotLink: {
     background: "none",
