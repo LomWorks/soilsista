@@ -91,6 +91,15 @@ export default function Dashboard() {
     );
   }
 
+  // FIX: Normalize location once at the top level so every child gets a
+  //      consistent { island: "..." } object regardless of how it was stored
+  //      in Firestore (plain string "Antigua" vs object { island: "Antigua" }).
+  const normalizedLocation = typeof userData.location === "string"
+    ? { island: userData.location }
+    : userData.location ?? null;
+
+  const islandLabel = normalizedLocation?.island || null;
+
   return (
     <div style={styles.dashboard}>
       <motion.div
@@ -101,7 +110,8 @@ export default function Dashboard() {
       >
         <h1>Welcome back, {userData.name || "Farmer"}! 🌱</h1>
         <p style={styles.subtitle}>
-          {userData.location?.island} • {userData.farmSize} • {userData.farmingType} Farming
+          {/* FIX: Use normalized island label instead of userData.location?.island */}
+          {islandLabel} • {userData.farmSize} • {userData.farmingType} Farming
           {userData.planType === "paid" && (
             <span style={styles.premiumBadge}>💬 Premium</span>
           )}
@@ -129,7 +139,11 @@ export default function Dashboard() {
           <OverviewTab userData={userData} activities={activities} user={user} />
         )}
         {activeTab === "planner" && <PlannerTab userData={userData} />}
-        {activeTab === "weather" && <WeatherTab userData={userData} />}
+        {activeTab === "weather" && (
+          // FIX: Pass normalizedLocation so WeatherWidget always receives
+          //      { island: "..." } regardless of the Firestore storage format.
+          <WeatherTab userData={userData} location={normalizedLocation} />
+        )}
         {activeTab === "resources" && <ResourcesTab />}
       </div>
     </div>
@@ -290,12 +304,16 @@ function PlannerTab({ userData }) {
   );
 }
 
-function WeatherTab({ userData }) {
+// FIX: Accept `location` as a prop (already normalized by Dashboard) instead of
+//      deriving it from userData.location directly, which could be a plain string.
+function WeatherTab({ userData, location }) {
   return (
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.5 }} style={styles.tabContent}>
       <h2>🌤️ Climate & Weather Data</h2>
-      <p style={styles.description}>Real-time weather and climate insights for {userData.location?.island || "your location"}</p>
-      <WeatherWidget location={userData.location} userData={userData} />
+      <p style={styles.description}>
+        Real-time weather and climate insights for {location?.island || "your location"}
+      </p>
+      <WeatherWidget location={location} userData={userData} />
     </motion.div>
   );
 }
