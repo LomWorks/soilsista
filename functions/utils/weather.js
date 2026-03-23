@@ -11,6 +11,37 @@ const {
 
 const CACHE_TTL_MS = 30 * 60 * 1000;
 
+// ── Island normalization ──────────────────────────────────────────────────────
+// Resolves whatever string comes from Firestore to a canonical LOCATIONS key.
+// Order: exact match → case-insensitive → partial (contains) → null.
+// Returning null causes the HTTP handler to send a 400 with supportedIslands.
+
+function normalizeIsland(raw) {
+  if (!raw) return null;
+  const trimmed = raw.trim();
+
+  // 1. Exact match
+  if (LOCATIONS[trimmed]) return trimmed;
+
+  // 2. Case-insensitive exact match
+  const lower = trimmed.toLowerCase();
+  const ciMatch = Object.keys(LOCATIONS).find(k => k.toLowerCase() === lower);
+  if (ciMatch) return ciMatch;
+
+  // 3. Partial match — key contains the input or input contains the key
+  const partialMatch = Object.keys(LOCATIONS).find(k =>
+    k.toLowerCase().includes(lower) || lower.includes(k.toLowerCase())
+  );
+  if (partialMatch) return partialMatch;
+
+  return null;
+}
+
+// Public list returned in 400 responses so the frontend can render a selector
+const SUPPORTED_ISLANDS = Object.keys(LOCATIONS);
+
+// ── Weather code helpers ──────────────────────────────────────────────────────
+
 function describeTomorrowCode(code) {
   const map = {
     1000: 'Clear sky', 1100: 'Mostly clear', 1101: 'Partly cloudy',
@@ -21,13 +52,27 @@ function describeTomorrowCode(code) {
   return map[code] || 'Unknown';
 }
 
+function getEmoji(code) {
+  if (code === 1000) return '☀️';
+  if (code <= 1101) return '⛅';
+  if (code <= 1102) return '🌥️';
+  if (code === 1001) return '☁️';
+  if (code === 2000) return '🌫️';
+  if (code <= 4200) return '🌦️';
+  if (code <= 4201) return '🌧️';
+  if (code === 8000) return '⛈️';
+  return '🌤️';
+}
+
 // ── Shared fetch logic ────────────────────────────────────────────────────────
 
 async function fetchFromTomorrowIO(island) {
   const apiKey = process.env.TOMORROW_KEY;
   if (!apiKey) throw new Error('TOMORROW_KEY environment variable not set');
 
-  const coords = LOCATIONS[island] || LOCATIONS['Antigua'];
+  const coords = LOCATIONS[island];
+  if (!coords) throw new Error(`No coordinates found for island: ${island}`);
+
   const fields = [
     'temperature', 'temperatureMax', 'temperatureMin',
     'humidity', 'windSpeed', 'windGust',
@@ -77,16 +122,9 @@ async function fetchFromTomorrowIO(island) {
   };
 }
 
-function getEmoji(code) {
-  if (code === 1000) return '☀️';
-  if (code <= 1101) return '⛅';
-  if (code <= 1102) return '🌥️';
-  if (code === 1001) return '☁️';
-  if (code === 2000) return '🌫️';
-  if (code <= 4200) return '🌦️';
-  if (code <= 4201) return '🌧️';
-  if (code === 8000) return '⛈️';
-  return '🌤️';
+// ── Cache key — strip all non-alphanumeric chars to keep Firestore doc IDs clean
+function makeCacheKey(island) {
+  return `weather_cache_${island.toLowerCase().replace(/[^a-z0-9]/g, '_')}`;
 }
 
 // ── HTTP endpoint — called by WeatherWidget frontend ─────────────────────────
@@ -98,8 +136,20 @@ const getWeather = functions
     res.set('Access-Control-Allow-Methods', 'GET, OPTIONS');
     if (req.method === 'OPTIONS') { res.status(204).send(''); return; }
 
-    const island = req.query.island || 'Antigua';
-    const cacheKey = `weather_cache_${island.toLowerCase().replace(/\s/g, '_')}`;
+    const rawIsland = req.query.island || 'Antigua';
+
+    // Normalize: resolve Firestore variants like "New Providence (Nassau)" → canonical key
+    const island = normalizeIsland(rawIsland);
+    if (!island) {
+      console.warn(`getWeather: unsupported island "${rawIsland}"`);
+      res.status(400).json({
+        error: `Location "${rawIsland}" is not supported yet.`,
+        supportedIslands: SUPPORTED_ISLANDS,
+      });
+      return;
+    }
+
+    const cacheKey = makeCacheKey(island);
     const cacheRef = admin.firestore().collection('_cache').doc(cacheKey);
 
     try {
@@ -120,7 +170,11 @@ const getWeather = functions
       // Stale cache fallback
       try {
         const stale = await cacheRef.get();
-        if (stale.exists) { res.set('X-Cache', 'STALE'); res.json({ ...stale.data().data, stale: true }); return; }
+        if (stale.exists) {
+          res.set('X-Cache', 'STALE');
+          res.json({ ...stale.data().data, stale: true });
+          return;
+        }
       } catch (_) {}
       res.status(500).json({ error: err.message });
     }
@@ -129,8 +183,9 @@ const getWeather = functions
 // ── Used by dailyTasks — checks cache first, calls Tomorrow.io if stale ──────
 
 async function fetchWeather(location) {
-  const island = location?.island || 'Antigua';
-  const cacheKey = `weather_cache_${island.toLowerCase().replace(/\s/g, '_')}`;
+  const rawIsland = location?.island || 'Antigua';
+  const island = normalizeIsland(rawIsland) || 'Antigua';
+  const cacheKey = makeCacheKey(island);
   const cacheRef = admin.firestore().collection('_cache').doc(cacheKey);
 
   try {
