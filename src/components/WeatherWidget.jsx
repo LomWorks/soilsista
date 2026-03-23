@@ -60,6 +60,8 @@ function getThresholdsForCrops(crops) {
 // ── Build alerts from Tomorrow.io shaped data (from Cloud Function) ───────────
 // weather.current: { temp, humidity, windSpeed, windGust, rainfall, label, emoji }
 // weather.forecast: [{ day, high, low, rain, rainProb, label, emoji }]
+// FIX 4: buildAlerts is called at render time (not stored in state) so alerts
+//         always reflect the current crop list without needing a re-fetch.
 function buildAlerts(weather, crops, t) {
   const alerts = [];
   const forecastRain = weather.forecast.map(d => d.rain);
@@ -127,6 +129,10 @@ export default function WeatherWidget({ location, userData }) {
   ];
   const thresholds = getThresholdsForCrops(crops);
 
+  // FIX 4: Alerts derived at render time so they always reflect the current
+  //         crop list without requiring a re-fetch.
+  const alerts = weather ? buildAlerts(weather, crops, thresholds) : [];
+
   const doFetch = async (island) => {
     setLoading(true);
     setError(null);
@@ -147,10 +153,17 @@ export default function WeatherWidget({ location, userData }) {
 
       const data = await res.json();
 
-      setWeather({
-        ...data,
-        alerts: buildAlerts(data, crops, thresholds),
-      });
+      // FIX 3: Normalize fetchedAt to a ms timestamp regardless of whether
+      //         the backend returns an ISO string or a numeric timestamp.
+      //         Falls back to Date.now() if absent, so the 30-min cache always works.
+      const fetchedAt = data.fetchedAt
+        ? (typeof data.fetchedAt === "string"
+            ? new Date(data.fetchedAt).getTime()
+            : data.fetchedAt)
+        : Date.now();
+
+      // FIX 4: Store only raw weather data — alerts are computed at render time.
+      setWeather({ ...data, fetchedAt });
       fetchedFor.current = island;
     } catch (err) {
       setError(err.name === "AbortError"
@@ -163,7 +176,15 @@ export default function WeatherWidget({ location, userData }) {
 
   useEffect(() => {
     const island = location?.island;
-    if (!island) return;
+
+    // FIX 1: When island is missing, stop the spinner and show a clear message
+    //         instead of hanging in the loading state indefinitely.
+    if (!island) {
+      setLoading(false);
+      setError("No location set. Please update your profile to see weather data.");
+      return;
+    }
+
     if (fetchedFor.current === island && weather?.fetchedAt && Date.now() - weather.fetchedAt < 30 * 60 * 1000) return;
     doFetch(island);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -180,9 +201,11 @@ export default function WeatherWidget({ location, userData }) {
     <div style={styles.errorBox}>
       <p style={{ fontWeight: 600 }}>⚠️ Unable to load weather</p>
       <p style={styles.errorSub}>{error}</p>
-      <button style={styles.retryBtn} onClick={() => doFetch(location?.island || "Antigua")}>
-        Try again
-      </button>
+      {location?.island && (
+        <button style={styles.retryBtn} onClick={() => doFetch(location.island)}>
+          Try again
+        </button>
+      )}
     </div>
   );
 
@@ -218,11 +241,11 @@ export default function WeatherWidget({ location, userData }) {
         </div>
       </motion.div>
 
-      {/* Crop-aware alerts */}
-      {weather.alerts.length > 0 && (
+      {/* Crop-aware alerts — FIX 4: uses render-time `alerts`, not weather.alerts */}
+      {alerts.length > 0 && (
         <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.15 }}>
           <h4 style={styles.sectionTitle}>⚠️ Farming Alerts</h4>
-          {weather.alerts.map((alert, i) => (
+          {alerts.map((alert, i) => (
             <div key={i} style={{
               ...styles.alert,
               background: alert.severity === "warning" ? "#FFF7ED" : "#F0F9F4",
@@ -282,9 +305,14 @@ export default function WeatherWidget({ location, userData }) {
         </ul>
       </motion.div>
 
-     <p style={styles.footer}>
-  {weather.island} · Updated {new Date(weather.fetchedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-</p>
+      {/* FIX 2: Guard against missing/invalid fetchedAt before calling toLocaleTimeString */}
+      <p style={styles.footer}>
+        {weather.island} · Updated {
+          weather.fetchedAt
+            ? new Date(weather.fetchedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+            : "—"
+        }
+      </p>
     </div>
   );
 }
