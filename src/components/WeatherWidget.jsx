@@ -121,6 +121,8 @@ export default function WeatherWidget({ location, userData }) {
   const [weather, setWeather] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [supportedIslands, setSupportedIslands] = useState(null);
+  const [manualIsland, setManualIsland] = useState(null);
   const fetchedFor = useRef(null);
 
   const crops = [
@@ -136,6 +138,7 @@ export default function WeatherWidget({ location, userData }) {
   const doFetch = async (island) => {
     setLoading(true);
     setError(null);
+    setSupportedIslands(null);
     try {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 12000);
@@ -148,21 +151,22 @@ export default function WeatherWidget({ location, userData }) {
 
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
+        // 400 means the island wasn't recognized — backend sends supportedIslands list
+        if (res.status === 400 && body.supportedIslands) {
+          setSupportedIslands(body.supportedIslands);
+        }
         throw new Error(body.error || `Server error ${res.status}`);
       }
 
       const data = await res.json();
 
-      // FIX 3: Normalize fetchedAt to a ms timestamp regardless of whether
-      //         the backend returns an ISO string or a numeric timestamp.
-      //         Falls back to Date.now() if absent, so the 30-min cache always works.
+      // Normalize fetchedAt to ms timestamp regardless of backend format
       const fetchedAt = data.fetchedAt
         ? (typeof data.fetchedAt === "string"
             ? new Date(data.fetchedAt).getTime()
             : data.fetchedAt)
         : Date.now();
 
-      // FIX 4: Store only raw weather data — alerts are computed at render time.
       setWeather({ ...data, fetchedAt });
       fetchedFor.current = island;
     } catch (err) {
@@ -175,10 +179,8 @@ export default function WeatherWidget({ location, userData }) {
   };
 
   useEffect(() => {
-    const island = location?.island;
+    const island = manualIsland || location?.island;
 
-    // FIX 1: When island is missing, stop the spinner and show a clear message
-    //         instead of hanging in the loading state indefinitely.
     if (!island) {
       setLoading(false);
       setError("No location set. Please update your profile to see weather data.");
@@ -188,7 +190,7 @@ export default function WeatherWidget({ location, userData }) {
     if (fetchedFor.current === island && weather?.fetchedAt && Date.now() - weather.fetchedAt < 30 * 60 * 1000) return;
     doFetch(island);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [location?.island]);
+  }, [location?.island, manualIsland]);
 
   if (loading) return (
     <div style={styles.loading}>
@@ -201,7 +203,26 @@ export default function WeatherWidget({ location, userData }) {
     <div style={styles.errorBox}>
       <p style={{ fontWeight: 600 }}>⚠️ Unable to load weather</p>
       <p style={styles.errorSub}>{error}</p>
-      {location?.island && (
+      {supportedIslands ? (
+        <div style={styles.islandSelector}>
+          <p style={styles.islandSelectorLabel}>Select your nearest supported location:</p>
+          <select
+            style={styles.islandSelect}
+            defaultValue=""
+            onChange={e => {
+              if (e.target.value) {
+                setManualIsland(e.target.value);
+                setError(null);
+              }
+            }}
+          >
+            <option value="" disabled>Choose a location…</option>
+            {supportedIslands.map(island => (
+              <option key={island} value={island}>{island}</option>
+            ))}
+          </select>
+        </div>
+      ) : location?.island && (
         <button style={styles.retryBtn} onClick={() => doFetch(location.island)}>
           Try again
         </button>
@@ -347,6 +368,9 @@ const styles = {
   errorBox:     { textAlign: "center", padding: "2rem", background: "#fef2f2", borderRadius: "12px", border: "1px solid #fee2e2" },
   errorSub:     { color: "#666", fontSize: "0.9rem", marginTop: "0.5rem" },
   retryBtn:     { marginTop: "1rem", padding: "0.5rem 1.5rem", background: "var(--soil-green)", color: "white", border: "none", borderRadius: "6px", cursor: "pointer" },
+  islandSelector:      { marginTop: "1.25rem" },
+  islandSelectorLabel: { fontSize: "0.88rem", color: "#666", marginBottom: "0.5rem" },
+  islandSelect:        { width: "100%", padding: "0.6rem 0.75rem", borderRadius: "8px", border: "1px solid #d1d5db", fontSize: "0.95rem", background: "white", cursor: "pointer", color: "#333" },
   current:      { marginBottom: "2rem" },
   currentMain:  { display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "1.25rem" },
   tempValue:    { fontSize: "3.5rem", fontWeight: "bold", color: "var(--ink-black)", lineHeight: 1 },
