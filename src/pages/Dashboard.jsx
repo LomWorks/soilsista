@@ -1,11 +1,140 @@
 import React, { useState, useEffect } from "react";
-import { motion } from "framer-motion";
+import { motion, AnimatePresence } from "framer-motion";
 import { db, auth } from "../firebase";
 import { doc, getDoc, collection, query, where, orderBy, limit, getDocs, updateDoc } from "firebase/firestore";
 import { onAuthStateChanged } from "firebase/auth";
 import CropPlanner from "../components/CropPlanner";
 import WeatherWidget from "../components/WeatherWidget";
 
+// ── Profile Completion Banner ─────────────────────────────────────────────────
+// Shown when key profile fields are missing. Does NOT redirect — gives the user
+// a visible nudge with a link to their profile settings page.
+function ProfileCompletionBanner({ userData }) {
+  const [dismissed, setDismissed] = useState(false);
+
+  if (dismissed) return null;
+
+  const missing = [];
+  if (!userData.location?.island)  missing.push({ field: "Location",     hint: "Required for weather data and local recommendations" });
+  if (!userData.farmSize)          missing.push({ field: "Farm size",     hint: "Helps calculate planting needs" });
+  if (!userData.farmingType)       missing.push({ field: "Farming type",  hint: "Helps us customise your experience" });
+  if (!userData.currentCrops?.length) missing.push({ field: "Current crops", hint: "Enables crop-aware weather alerts and planning tools" });
+
+  if (missing.length === 0) return null;
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: -12 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: -12 }}
+      style={bannerStyles.banner}
+    >
+      <div style={bannerStyles.top}>
+        <div style={bannerStyles.heading}>
+          <span style={{ fontSize: "1.2rem" }}>📋</span>
+          <strong>Your profile is incomplete</strong>
+          <span style={bannerStyles.count}>{missing.length} field{missing.length > 1 ? "s" : ""} missing</span>
+        </div>
+        <button onClick={() => setDismissed(true)} style={bannerStyles.dismiss} aria-label="Dismiss">✕</button>
+      </div>
+      <div style={bannerStyles.fields}>
+        {missing.map(({ field, hint }) => (
+          <div key={field} style={bannerStyles.field}>
+            <span style={bannerStyles.fieldDot} />
+            <div>
+              <span style={bannerStyles.fieldName}>{field}</span>
+              <span style={bannerStyles.fieldHint}> — {hint}</span>
+            </div>
+          </div>
+        ))}
+      </div>
+      <a href="/profile" style={bannerStyles.cta}>Update your profile →</a>
+    </motion.div>
+  );
+}
+
+const bannerStyles = {
+  banner: {
+    background: "#FFFBEB",
+    border: "1px solid #FCD34D",
+    borderRadius: "12px",
+    padding: "1.25rem 1.5rem",
+    marginBottom: "2rem",
+    maxWidth: "1200px",
+    margin: "0 auto 2rem",
+  },
+  top: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    marginBottom: "0.75rem",
+  },
+  heading: {
+    display: "flex",
+    alignItems: "center",
+    gap: "0.5rem",
+    fontSize: "1rem",
+    color: "#92400E",
+  },
+  count: {
+    background: "#FDE68A",
+    color: "#92400E",
+    fontSize: "0.78rem",
+    fontWeight: "600",
+    padding: "0.15rem 0.5rem",
+    borderRadius: "20px",
+  },
+  dismiss: {
+    background: "none",
+    border: "none",
+    cursor: "pointer",
+    color: "#92400E",
+    fontSize: "0.9rem",
+    opacity: 0.6,
+    padding: 0,
+    lineHeight: 1,
+  },
+  fields: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "0.4rem",
+    marginBottom: "1rem",
+  },
+  field: {
+    display: "flex",
+    alignItems: "flex-start",
+    gap: "0.5rem",
+    fontSize: "0.9rem",
+    color: "#78350F",
+  },
+  fieldDot: {
+    width: "6px",
+    height: "6px",
+    borderRadius: "50%",
+    background: "#F59E0B",
+    marginTop: "6px",
+    flexShrink: 0,
+  },
+  fieldName: {
+    fontWeight: "600",
+  },
+  fieldHint: {
+    color: "#92400E",
+    opacity: 0.8,
+  },
+  cta: {
+    display: "inline-block",
+    background: "#F59E0B",
+    color: "white",
+    padding: "0.5rem 1.25rem",
+    borderRadius: "8px",
+    textDecoration: "none",
+    fontWeight: "600",
+    fontSize: "0.9rem",
+  },
+};
+
+// ── Dashboard ─────────────────────────────────────────────────────────────────
 export default function Dashboard() {
   const [userData, setUserData] = useState(null);
   const [activities, setActivities] = useState([]);
@@ -28,9 +157,6 @@ export default function Dashboard() {
   const fetchUserData = async (userId, authUser) => {
     setLoading(true);
     try {
-      // Retry up to 5 times with increasing delays — handles the race condition
-      // where onUserCreate Cloud Function hasn't written the Firestore doc yet
-      // (common with Google OAuth sign-in)
       let userDoc = null;
       const delays = [0, 1000, 2000, 3000, 4000];
       for (let i = 0; i < delays.length; i++) {
@@ -91,9 +217,6 @@ export default function Dashboard() {
     );
   }
 
-  // FIX: Normalize location once at the top level so every child gets a
-  //      consistent { island: "..." } object regardless of how it was stored
-  //      in Firestore (plain string "Antigua" vs object { island: "Antigua" }).
   const normalizedLocation = typeof userData.location === "string"
     ? { island: userData.location }
     : userData.location ?? null;
@@ -110,13 +233,15 @@ export default function Dashboard() {
       >
         <h1>Welcome back, {userData.name || "Farmer"}! 🌱</h1>
         <p style={styles.subtitle}>
-          {/* FIX: Use normalized island label instead of userData.location?.island */}
-          {islandLabel} • {userData.farmSize} • {userData.farmingType} Farming
+          {islandLabel || "Location not set"} • {userData.farmSize || "Farm size not set"} • {userData.farmingType ? `${userData.farmingType} Farming` : "Farming type not set"}
           {userData.planType === "paid" && (
             <span style={styles.premiumBadge}>💬 Premium</span>
           )}
         </p>
       </motion.div>
+
+      {/* Profile completion banner — only visible when fields are missing */}
+      <ProfileCompletionBanner userData={{ ...userData, location: normalizedLocation }} />
 
       <div style={styles.tabs}>
         {["overview", "planner", "weather", "resources"].map(tab => (
@@ -140,8 +265,6 @@ export default function Dashboard() {
         )}
         {activeTab === "planner" && <PlannerTab userData={userData} />}
         {activeTab === "weather" && (
-          // FIX: Pass normalizedLocation so WeatherWidget always receives
-          //      { island: "..." } regardless of the Firestore storage format.
           <WeatherTab userData={userData} location={normalizedLocation} />
         )}
         {activeTab === "resources" && <ResourcesTab />}
@@ -193,7 +316,7 @@ function OverviewTab({ userData, activities }) {
               ))}
             </div>
           ) : (
-            <p style={styles.emptyState}>No crops planted yet. Start planning!</p>
+            <p style={styles.emptyState}>No crops added yet. <a href="/profile" style={styles.inlineLink}>Add your crops →</a></p>
           )}
         </motion.div>
 
@@ -304,8 +427,6 @@ function PlannerTab({ userData }) {
   );
 }
 
-// FIX: Accept `location` as a prop (already normalized by Dashboard) instead of
-//      deriving it from userData.location directly, which could be a plain string.
 function WeatherTab({ userData, location }) {
   return (
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.5 }} style={styles.tabContent}>
@@ -429,6 +550,7 @@ const styles = {
   activityTitle: { fontSize: "0.95rem", fontWeight: "500" },
   activityType: { fontSize: "0.8rem", color: "#999", marginTop: "0.25rem", textTransform: "capitalize" },
   emptyState: { textAlign: "center", color: "#999", padding: "2rem", fontStyle: "italic" },
+  inlineLink: { color: "var(--soil-green)", fontWeight: "600", textDecoration: "none" },
   description: { color: "#666", marginBottom: "2rem" },
   resourceGrid: { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: "1.5rem", marginTop: "2rem" },
   resourceCard: { background: "white", padding: "1.25rem 1.5rem", borderRadius: "12px", boxShadow: "0 2px 4px rgba(0,0,0,0.08)", cursor: "pointer", transition: "all 0.2s", border: "2px solid transparent" },
