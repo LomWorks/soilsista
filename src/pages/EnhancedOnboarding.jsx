@@ -2,6 +2,9 @@
 // 1. In the self service signup (free signup) there should be a second password field to mitigate hiccups. ✅ (already had confirmPassword — now properly wired)
 // 2. Array fields (growingSites, waterSources, crops, pestControl, diseases) now use TagInput chip component instead of fragile comma-split
 // 3. growingSites and waterSources now have their own dedicated steps (were previously missing entirely)
+// 4. submitFreeVersion and submitPaidVersion now use setDoc with { merge: true } to prevent
+//    onUserCreate Cloud Function race condition from overwriting good onboarding data with nulls.
+//    onUserCreate owns the skeleton fields (role, stats, createdAt); onboarding owns profile fields.
 import React, { useState } from "react";
 import { db, auth } from "../firebase";
 import { doc, setDoc, addDoc, collection, serverTimestamp } from "firebase/firestore";
@@ -209,6 +212,11 @@ export default function EnhancedOnboarding() {
     return userCredential.user.uid;
   };
 
+  // ─── submitFreeVersion ──────────────────────────────────────────────────────
+  // Uses { merge: true } so this write layers on top of the skeleton onUserCreate
+  // already wrote, rather than replacing the whole document. This eliminates the
+  // race condition where onUserCreate resolves after this write and overwrites
+  // accountStatus, location, etc. back to nulls/"pending".
   const submitFreeVersion = async () => {
     if (!isFreeStepValid(0) || !isFreeStepValid(1) || !isFreeStepValid(2) || !isFreeStepValid(3)) {
       alert("Please complete all required fields");
@@ -234,10 +242,8 @@ export default function EnhancedOnboarding() {
         cropDiversity: freeData.cropDiversity,
         pestControl: freeData.pestControl,
         diseases: freeData.diseases,
-        stats: { cropsPlanted: 0, cropsHarvested: 0, lastActive: new Date() },
-        createdAt: serverTimestamp(),
         updatedAt: serverTimestamp()
-      });
+      }, { merge: true });
       await addDoc(collection(db, "activities"), {
         userId,
         type: "notification",
@@ -259,6 +265,8 @@ export default function EnhancedOnboarding() {
     }
   };
 
+  // ─── submitPaidVersion ──────────────────────────────────────────────────────
+  // Same { merge: true } pattern — see comment above.
   const submitPaidVersion = async () => {
     const newErrors = {};
     if (!validateEmail(email)) newErrors.email = "Please enter a valid email address";
@@ -286,10 +294,8 @@ export default function EnhancedOnboarding() {
         phone: paidData.phone,
         currentIssue: paidData.currentIssue,
         consultationStatus: "pending",
-        stats: { cropsPlanted: 0, cropsHarvested: 0, lastActive: new Date() },
-        createdAt: serverTimestamp(),
         updatedAt: serverTimestamp()
-      });
+      }, { merge: true });
       await addDoc(collection(db, "activities"), {
         userId,
         type: "consultation",
@@ -331,8 +337,8 @@ export default function EnhancedOnboarding() {
     <BasicInfo data={freeData} setData={setFreeData} errors={errors} key={1} />,
     <LocationInfo data={freeData} setData={setFreeData} errors={errors} key={2} />,
     <FarmSize data={freeData} setData={setFreeData} errors={errors} key={3} />,
-    <GrowingSites data={freeData} setData={setFreeData} key={4} />,      // ← was missing
-    <WaterSources data={freeData} setData={setFreeData} key={5} />,      // ← was missing
+    <GrowingSites data={freeData} setData={setFreeData} key={4} />,
+    <WaterSources data={freeData} setData={setFreeData} key={5} />,
     <FarmingType data={freeData} setData={setFreeData} key={6} />,
     <CropsInfo data={freeData} setData={setFreeData} key={7} />,
     <PestControl data={freeData} setData={setFreeData} key={8} />,
@@ -590,7 +596,6 @@ function FarmSize({ data, setData, errors }) {
   );
 }
 
-// ✅ NEW — was completely missing
 function GrowingSites({ data, setData }) {
   return (
     <div style={styles.stepContent}>
@@ -607,7 +612,6 @@ function GrowingSites({ data, setData }) {
   );
 }
 
-// ✅ NEW — was completely missing
 function WaterSources({ data, setData }) {
   return (
     <div style={styles.stepContent}>
