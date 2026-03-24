@@ -4,6 +4,7 @@
 
 import React, { useState, useEffect, useRef } from "react";
 import { motion } from "framer-motion";
+import CARIBBEAN_ISLANDS from "../utils/caribbeanIslands";
 
 const FUNCTION_URL = "https://us-central1-soil-sista.cloudfunctions.net/getWeather";
 
@@ -57,11 +58,6 @@ function getThresholdsForCrops(crops) {
   return t;
 }
 
-// ── Build alerts from Tomorrow.io shaped data (from Cloud Function) ───────────
-// weather.current: { temp, humidity, windSpeed, windGust, rainfall, label, emoji }
-// weather.forecast: [{ day, high, low, rain, rainProb, label, emoji }]
-// FIX 4: buildAlerts is called at render time (not stored in state) so alerts
-//         always reflect the current crop list without needing a re-fetch.
 function buildAlerts(weather, crops, t) {
   const alerts = [];
   const forecastRain = weather.forecast.map(d => d.rain);
@@ -87,7 +83,7 @@ function buildAlerts(weather, crops, t) {
       advice: ["Water only at dawn or dusk to reduce evaporation", "Apply mulch to keep root zone cool", "Add shade cloth (30–50%) over sensitive beds", "Watch for wilting twice daily"] });
 
   const droughtDays = Math.ceil(t.droughtHrs / 24);
-  if (forecastRain.slice(0, Math.min(droughtDays, 7)).every(r => r < 2))
+  if (forecastRain.slice(0, Math.min(droughtDays, 5)).every(r => r < 2))
     alerts.push({ severity: "warning", icon: "☀️", title: "Dry Conditions Alert",
       message: `No meaningful rain forecast for ${droughtDays}+ days — ${cropLabel} will need manual irrigation.`,
       advice: ["Increase watering frequency — don't wait for wilting", "Water deeply at root zone, not the surface", "Prioritise fruiting crops (peppers, tomatoes, cucumbers)", "Mulch exposed soil to cut evaporation by up to 50%"] });
@@ -130,9 +126,6 @@ export default function WeatherWidget({ location, userData }) {
     ...(userData?.crops || []),
   ];
   const thresholds = getThresholdsForCrops(crops);
-
-  // FIX 4: Alerts derived at render time so they always reflect the current
-  //         crop list without requiring a re-fetch.
   const alerts = weather ? buildAlerts(weather, crops, thresholds) : [];
 
   const doFetch = async (island) => {
@@ -151,7 +144,6 @@ export default function WeatherWidget({ location, userData }) {
 
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
-        // 400 means the island wasn't recognized — backend sends supportedIslands list
         if (res.status === 400 && body.supportedIslands) {
           setSupportedIslands(body.supportedIslands);
         }
@@ -159,8 +151,6 @@ export default function WeatherWidget({ location, userData }) {
       }
 
       const data = await res.json();
-
-      // Normalize fetchedAt to ms timestamp regardless of backend format
       const fetchedAt = data.fetchedAt
         ? (typeof data.fetchedAt === "string"
             ? new Date(data.fetchedAt).getTime()
@@ -183,7 +173,7 @@ export default function WeatherWidget({ location, userData }) {
 
     if (!island) {
       setLoading(false);
-      setError("No location set. Please update your profile to see weather data.");
+      setError("no_location");
       return;
     }
 
@@ -196,6 +186,33 @@ export default function WeatherWidget({ location, userData }) {
     <div style={styles.loading}>
       <div style={styles.spinner} />
       <p>Loading weather for {location?.island || "your location"}…</p>
+    </div>
+  );
+
+  // ── No location set — show island picker directly instead of a dead-end error
+  if (error === "no_location") return (
+    <div style={styles.errorBox}>
+      <p style={{ fontWeight: 600 }}>📍 No location set</p>
+      <p style={styles.errorSub}>Select your island below to see weather data, or update your location in your profile.</p>
+      <div style={styles.islandSelector}>
+        <p style={styles.islandSelectorLabel}>Select your island:</p>
+        <select
+          style={styles.islandSelect}
+          defaultValue=""
+          onChange={e => {
+            if (e.target.value) {
+              setManualIsland(e.target.value);
+              setError(null);
+            }
+          }}
+        >
+          <option value="" disabled>Choose a location…</option>
+          {CARIBBEAN_ISLANDS.map(island => (
+            <option key={island} value={island}>{island}</option>
+          ))}
+        </select>
+      </div>
+      <a href="/profile" style={styles.profileLink}>Update your profile to save your location →</a>
     </div>
   );
 
@@ -262,7 +279,7 @@ export default function WeatherWidget({ location, userData }) {
         </div>
       </motion.div>
 
-      {/* Crop-aware alerts — FIX 4: uses render-time `alerts`, not weather.alerts */}
+      {/* Crop-aware alerts */}
       {alerts.length > 0 && (
         <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.15 }}>
           <h4 style={styles.sectionTitle}>⚠️ Farming Alerts</h4>
@@ -287,9 +304,9 @@ export default function WeatherWidget({ location, userData }) {
         </motion.div>
       )}
 
-      {/* 7-day forecast */}
+      {/* 5-day forecast */}
       <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.25 }}>
-        <h4 style={styles.sectionTitle}>7-Day Forecast</h4>
+        <h4 style={styles.sectionTitle}>5-Day Forecast</h4>
         <div style={styles.forecastGrid}>
           {weather.forecast.map((day, i) => (
             <div key={i} style={{
@@ -326,7 +343,6 @@ export default function WeatherWidget({ location, userData }) {
         </ul>
       </motion.div>
 
-      {/* FIX 2: Guard against missing/invalid fetchedAt before calling toLocaleTimeString */}
       <p style={styles.footer}>
         {weather.island} · Updated {
           weather.fetchedAt
@@ -368,6 +384,7 @@ const styles = {
   errorBox:     { textAlign: "center", padding: "2rem", background: "#fef2f2", borderRadius: "12px", border: "1px solid #fee2e2" },
   errorSub:     { color: "#666", fontSize: "0.9rem", marginTop: "0.5rem" },
   retryBtn:     { marginTop: "1rem", padding: "0.5rem 1.5rem", background: "var(--soil-green)", color: "white", border: "none", borderRadius: "6px", cursor: "pointer" },
+  profileLink:  { display: "block", marginTop: "1rem", color: "var(--soil-green)", fontSize: "0.85rem", textDecoration: "none", fontWeight: "600" },
   islandSelector:      { marginTop: "1.25rem" },
   islandSelectorLabel: { fontSize: "0.88rem", color: "#666", marginBottom: "0.5rem" },
   islandSelect:        { width: "100%", padding: "0.6rem 0.75rem", borderRadius: "8px", border: "1px solid #d1d5db", fontSize: "0.95rem", background: "white", cursor: "pointer", color: "#333" },
