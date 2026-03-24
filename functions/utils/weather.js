@@ -1,5 +1,6 @@
 const fetch = require('node-fetch');
-const functions = require('firebase-functions/v1');
+const { onRequest } = require('firebase-functions/v2/https');
+const { setGlobalOptions } = require('firebase-functions/v2');
 const admin = require('firebase-admin');
 const {
   LOCATIONS,
@@ -9,39 +10,29 @@ const {
   CROP_THRESHOLDS
 } = require('../config/constants');
 
+// ── Global function options (v2) ──────────────────────────────────────────────
+setGlobalOptions({ region: 'us-central1' });
+
 const CACHE_TTL_MS = 30 * 60 * 1000;
 
 // ── Island normalization ──────────────────────────────────────────────────────
-// Resolves whatever string comes from Firestore to a canonical LOCATIONS key.
-// Order: exact match → case-insensitive → partial (contains) → null.
-// Returning null causes the HTTP handler to send a 400 with supportedIslands.
-
 function normalizeIsland(raw) {
   if (!raw) return null;
   const trimmed = raw.trim();
-
-  // 1. Exact match
   if (LOCATIONS[trimmed]) return trimmed;
-
-  // 2. Case-insensitive exact match
   const lower = trimmed.toLowerCase();
   const ciMatch = Object.keys(LOCATIONS).find(k => k.toLowerCase() === lower);
   if (ciMatch) return ciMatch;
-
-  // 3. Partial match — key contains the input or input contains the key
   const partialMatch = Object.keys(LOCATIONS).find(k =>
     k.toLowerCase().includes(lower) || lower.includes(k.toLowerCase())
   );
   if (partialMatch) return partialMatch;
-
   return null;
 }
 
-// Public list returned in 400 responses so the frontend can render a selector
 const SUPPORTED_ISLANDS = Object.keys(LOCATIONS);
 
 // ── Weather code helpers ──────────────────────────────────────────────────────
-
 function describeTomorrowCode(code) {
   const map = {
     1000: 'Clear sky', 1100: 'Mostly clear', 1101: 'Partly cloudy',
@@ -65,7 +56,6 @@ function getEmoji(code) {
 }
 
 // ── Shared fetch logic ────────────────────────────────────────────────────────
-
 async function fetchFromTomorrowIO(island) {
   const apiKey = process.env.TOMORROW_KEY;
   if (!apiKey) throw new Error('TOMORROW_KEY environment variable not set');
@@ -79,11 +69,14 @@ async function fetchFromTomorrowIO(island) {
     'precipitationIntensity', 'precipitationProbability', 'weatherCode',
   ].join(',');
 
+  // FIX: Changed endTime from nowPlus7d to nowPlus5d — Tomorrow.io free tier
+  // restricts forecasts to a maximum of 5 days ahead. Requesting 7 days
+  // caused a 403 "Forbidden Action" error.
   const url =
     `https://api.tomorrow.io/v4/timelines` +
     `?location=${coords.lat},${coords.lon}` +
     `&fields=${fields}&units=metric` +
-    `&timesteps=current,1d&startTime=now&endTime=nowPlus7d` +
+    `&timesteps=current,1d&startTime=now&endTime=nowPlus5d` +
     `&apikey=${apiKey}`;
 
   const controller = new AbortController();
@@ -96,7 +89,7 @@ async function fetchFromTomorrowIO(island) {
   const raw = await response.json();
   const timelines = raw.data.timelines;
   const currentVals = timelines.find(t => t.timestep === 'current').intervals[0].values;
-  const daily = timelines.find(t => t.timestep === '1d').intervals.slice(0, 7);
+  const daily = timelines.find(t => t.timestep === '1d').intervals.slice(0, 5);
 
   return {
     island,
@@ -122,24 +115,20 @@ async function fetchFromTomorrowIO(island) {
   };
 }
 
-// ── Cache key — strip all non-alphanumeric chars to keep Firestore doc IDs clean
+// ── Cache key ─────────────────────────────────────────────────────────────────
 function makeCacheKey(island) {
   return `weather_cache_${island.toLowerCase().replace(/[^a-z0-9]/g, '_')}`;
 }
 
-// ── HTTP endpoint — called by WeatherWidget frontend ─────────────────────────
-
-const getWeather = functions
-  .runWith({ timeoutSeconds: 20, memory: '256MB' })
-  .https.onRequest(async (req, res) => {
-    res.set('Access-Control-Allow-Origin', '*');
-    res.set('Access-Control-Allow-Methods', 'GET, OPTIONS');
+// ── HTTP endpoint (v2) ────────────────────────────────────────────────────────
+const getWeather = onRequest(
+  { timeoutSeconds: 20, memory: '256MiB', cors: true },
+  async (req, res) => {
     if (req.method === 'OPTIONS') { res.status(204).send(''); return; }
 
     const rawIsland = req.query.island || 'Antigua';
-
-    // Normalize: resolve Firestore variants like "New Providence (Nassau)" → canonical key
     const island = normalizeIsland(rawIsland);
+
     if (!island) {
       console.warn(`getWeather: unsupported island "${rawIsland}"`);
       res.status(400).json({
@@ -167,7 +156,6 @@ const getWeather = functions
 
     } catch (err) {
       console.error('getWeather error:', err.message);
-      // Stale cache fallback
       try {
         const stale = await cacheRef.get();
         if (stale.exists) {
@@ -178,10 +166,10 @@ const getWeather = functions
       } catch (_) {}
       res.status(500).json({ error: err.message });
     }
-  });
+  }
+);
 
-// ── Used by dailyTasks — checks cache first, calls Tomorrow.io if stale ──────
-
+// ── Used by dailyTasks ────────────────────────────────────────────────────────
 async function fetchWeather(location) {
   const rawIsland = location?.island || 'Antigua';
   const island = normalizeIsland(rawIsland) || 'Antigua';
@@ -226,7 +214,6 @@ function transformForAnalysis(data) {
 }
 
 // ── Threshold + alert logic ───────────────────────────────────────────────────
-
 function getThresholdsForCrops(crops) {
   let t = {
     heatStress: HIGH_TEMP_THRESHOLD, coldStress: 5,
