@@ -7,12 +7,13 @@ const nodemailer = require('nodemailer');
  *
  * Trigger: When a new user signs up via Firebase Auth
  * Purpose:
- *   1. Initialize user document in Firestore with defaults
+ *   1. Initialize a SKELETON user document with only what Auth knows at this point.
+ *      Onboarding fields (accountStatus, location, planType, etc.) are intentionally
+ *      omitted here — they are written by the frontend setDoc with { merge: true }.
+ *      This avoids a race condition where onUserCreate resolves after the frontend
+ *      write and overwrites good onboarding data with nulls.
  *   2. Create in-app welcome notification
  *   3. Send welcome email via Gmail (Nodemailer)
- *
- * Required Firebase config (run once in functions/ folder):
- *   firebase functions:config:set gmail.user="info@soilsista.org" gmail.pass="your-app-password"
  */
 
 const getTransporter = () => nodemailer.createTransport({
@@ -34,27 +35,17 @@ module.exports = functions.auth.user().onCreate(async (user) => {
   }
 
   try {
-    // 1. Create Firestore user document
+    // 1. Write SKELETON document — only fields Auth knows right now.
+    //    Onboarding fields (accountStatus, location, planType, onboardingComplete, etc.)
+    //    are deliberately excluded. The frontend writes those via setDoc with { merge: true },
+    //    which layers on top of this skeleton. Using set() without merge here is safe
+    //    because we're only writing fields the frontend never touches.
     await admin.firestore().collection('users').doc(user.uid).set({
       userId: user.uid,
       email: user.email || null,
       phone: user.phoneNumber || null,
       role: 'farmer',
-      planType: null,
-      accountStatus: 'pending',
-      name: null,
-      location: null,
-      farmSize: null,
-      terrain: null,
-      waterSources: [],
-      farmingType: null,
-      currentCrops: [],
-      cropHistory: [],
-      pestControl: [],
-      recentIssues: [],
-      consultationStatus: null,
-      currentIssue: null,
-      consultationHistory: [],
+      emailVerified: user.emailVerified || false,
       stats: {
         cropsPlanted: 0,
         cropsHarvested: 0,
@@ -63,11 +54,9 @@ module.exports = functions.auth.user().onCreate(async (user) => {
       },
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-      onboardingComplete: false,
-      emailVerified: user.emailVerified || false
     });
 
-    console.log(`User document initialized for ${user.uid}`);
+    console.log(`Skeleton user document initialized for ${user.uid}`);
 
     // 2. Create in-app welcome notification
     await admin.firestore().collection('activities').add({
@@ -177,7 +166,6 @@ module.exports = functions.auth.user().onCreate(async (user) => {
 
         console.log(`Welcome email sent to ${user.email}`);
       } catch (emailError) {
-        // Don't fail the whole function if email fails
         console.error(`Failed to send welcome email to ${user.email}:`, emailError);
       }
     } else {
