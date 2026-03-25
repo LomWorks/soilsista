@@ -5,6 +5,7 @@ import { doc, getDoc, collection, query, where, orderBy, limit, getDocs, updateD
 import { onAuthStateChanged } from "firebase/auth";
 import CropPlanner from "../components/CropPlanner";
 import WeatherWidget from "../components/WeatherWidget";
+import LoadingScreen from "../components/LoadingScreen";
 
 // ── Profile Completion Banner ─────────────────────────────────────────────────
 // Shown when key profile fields are missing. Does NOT redirect — gives the user
@@ -200,14 +201,7 @@ export default function Dashboard() {
     }
   };
 
-  if (loading) {
-    return (
-      <div style={styles.loading}>
-        <div style={styles.spinner}></div>
-        <p>Loading your dashboard...</p>
-      </div>
-    );
-  }
+if (loading) return <LoadingScreen />;
 
   if (!userData) {
     return (
@@ -513,8 +507,6 @@ function ResourcesTab() {
 
 const styles = {
   dashboard: { minHeight: "100vh", background: "var(--paper-cream)", padding: "2rem" },
-  loading: { minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", fontSize: "1.2rem", color: "#666" },
-  spinner: { width: "50px", height: "50px", border: "5px solid #f3f3f3", borderTop: "5px solid var(--soil-green)", borderRadius: "50%", animation: "spin 1s linear infinite", marginBottom: "1rem" },
   header: { marginBottom: "2rem", textAlign: "center" },
   subtitle: { color: "#666", fontSize: "1rem", marginTop: "0.5rem", display: "flex", alignItems: "center", justifyContent: "center", gap: "0.5rem", flexWrap: "wrap" },
   premiumBadge: { background: "var(--soil-green)", color: "white", padding: "0.25rem 0.75rem", borderRadius: "12px", fontSize: "0.85rem", fontWeight: "600" },

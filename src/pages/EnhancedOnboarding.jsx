@@ -5,6 +5,7 @@
 // 4. submitFreeVersion and submitPaidVersion now use setDoc with { merge: true } to prevent
 //    onUserCreate Cloud Function race condition from overwriting good onboarding data with nulls.
 //    onUserCreate owns the skeleton fields (role, stats, createdAt); onboarding owns profile fields.
+// 5. farmingType moved to step 4 (required) — consistent with dashboard profile completion banner.
 import React, { useState } from "react";
 import { db, auth } from "../firebase";
 import { doc, setDoc, addDoc, collection, serverTimestamp } from "firebase/firestore";
@@ -174,7 +175,8 @@ export default function EnhancedOnboarding() {
       case 1: return freeData.name.trim().length > 0;
       case 2: return freeData.location.island.trim().length > 0 && freeData.location.settlement.trim().length > 0;
       case 3: return freeData.farmSize.trim().length > 0;
-      default: return true; // steps 4–9 are optional
+      case 4: return freeData.farmingType.trim().length > 0;
+      default: return true; // steps 5–9 are optional
     }
   };
 
@@ -200,6 +202,8 @@ export default function EnhancedOnboarding() {
       if (!freeData.location.settlement.trim()) newErrors.settlement = "Settlement/area is required";
     } else if (step === 3 && !freeData.farmSize.trim()) {
       newErrors.farmSize = "Farm size is required";
+    } else if (step === 4 && !freeData.farmingType.trim()) {
+      newErrors.farmingType = "Farming type is required";
     }
 
     setErrors(newErrors);
@@ -218,7 +222,7 @@ export default function EnhancedOnboarding() {
   // race condition where onUserCreate resolves after this write and overwrites
   // accountStatus, location, etc. back to nulls/"pending".
   const submitFreeVersion = async () => {
-    if (!isFreeStepValid(0) || !isFreeStepValid(1) || !isFreeStepValid(2) || !isFreeStepValid(3)) {
+    if (!isFreeStepValid(0) || !isFreeStepValid(1) || !isFreeStepValid(2) || !isFreeStepValid(3) || !isFreeStepValid(4)) {
       alert("Please complete all required fields");
       return;
     }
@@ -326,7 +330,7 @@ export default function EnhancedOnboarding() {
   if (loading) return <LoadingScreen />;
 
   // ===== Free Flow Steps =====
-  // Steps 0–3: required | Steps 4–9: optional
+  // Steps 0–4: required | Steps 5–9: optional
   const freeSteps = [
     <AccountSetup
       email={email} setEmail={setEmail}
@@ -337,9 +341,9 @@ export default function EnhancedOnboarding() {
     <BasicInfo data={freeData} setData={setFreeData} errors={errors} key={1} />,
     <LocationInfo data={freeData} setData={setFreeData} errors={errors} key={2} />,
     <FarmSize data={freeData} setData={setFreeData} errors={errors} key={3} />,
-    <GrowingSites data={freeData} setData={setFreeData} key={4} />,
-    <WaterSources data={freeData} setData={setFreeData} key={5} />,
-    <FarmingType data={freeData} setData={setFreeData} key={6} />,
+    <FarmingType data={freeData} setData={setFreeData} errors={errors} key={4} />,
+    <GrowingSites data={freeData} setData={setFreeData} key={5} />,
+    <WaterSources data={freeData} setData={setFreeData} key={6} />,
     <CropsInfo data={freeData} setData={setFreeData} key={7} />,
     <PestControl data={freeData} setData={setFreeData} key={8} />,
     <DiseasesInfo data={freeData} setData={setFreeData} key={9} />
@@ -596,6 +600,20 @@ function FarmSize({ data, setData, errors }) {
   );
 }
 
+function FarmingType({ data, setData, errors = {} }) {
+  return (
+    <div style={styles.stepContent}>
+      <h2>What type of farming do you do?</h2>
+      <p style={styles.stepDescription}>Helps us customise your dashboard experience</p>
+      <label style={styles.label}>Farming Type <span style={styles.required}>*</span></label>
+      <input placeholder="e.g., Crop farming, Mixed farming, Livestock" value={data.farmingType}
+        onChange={e => setData({ ...data, farmingType: e.target.value })}
+        style={{ ...styles.input, ...(errors.farmingType ? styles.inputError : {}) }} />
+      {errors.farmingType && <p style={styles.errorText}>{errors.farmingType}</p>}
+    </div>
+  );
+}
+
 function GrowingSites({ data, setData }) {
   return (
     <div style={styles.stepContent}>
@@ -624,18 +642,6 @@ function WaterSources({ data, setData }) {
         onChange={val => setData({ ...data, waterSources: val })}
         placeholder="e.g., Rainwater, Standpipe, Well, River"
       />
-    </div>
-  );
-}
-
-function FarmingType({ data, setData }) {
-  return (
-    <div style={styles.stepContent}>
-      <h2>What type of farming do you do?</h2>
-      <p style={styles.stepDescription}>Optional - helps us customize your experience</p>
-      <label style={styles.label}>Farming Type <span style={styles.optional}>(Optional)</span></label>
-      <input placeholder="e.g., Crop farming, Mixed farming, Livestock" value={data.farmingType}
-        onChange={e => setData({ ...data, farmingType: e.target.value })} style={styles.input} />
     </div>
   );
 }
