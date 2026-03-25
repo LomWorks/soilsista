@@ -241,8 +241,10 @@ export default function Dashboard() {
       </motion.div>
 
       {/* Profile completion banner — only visible when fields are missing */}
-      <ProfileCompletionBanner userData={{ ...userData, location: normalizedLocation }} />
-
+  {/* Profile completion banner — only visible when fields are missing */}
+  <AnimatePresence>
+     <ProfileCompletionBanner userData={{ ...userData, location: normalizedLocation }} />
+  </AnimatePresence>
       <div style={styles.tabs}>
         {["overview", "planner", "weather", "resources"].map(tab => (
           <motion.button
