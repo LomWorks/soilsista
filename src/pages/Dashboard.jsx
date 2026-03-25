@@ -8,17 +8,15 @@ import WeatherWidget from "../components/WeatherWidget";
 import LoadingScreen from "../components/LoadingScreen";
 
 // ── Profile Completion Banner ─────────────────────────────────────────────────
-// Shown when key profile fields are missing. Does NOT redirect — gives the user
-// a visible nudge with a link to their profile settings page.
 function ProfileCompletionBanner({ userData }) {
   const [dismissed, setDismissed] = useState(false);
 
   if (dismissed) return null;
 
   const missing = [];
-  if (!userData.location?.island)  missing.push({ field: "Location",     hint: "Required for weather data and local recommendations" });
-  if (!userData.farmSize)          missing.push({ field: "Farm size",     hint: "Helps calculate planting needs" });
-  if (!userData.farmingType)       missing.push({ field: "Farming type",  hint: "Helps us customise your experience" });
+  if (!userData.location?.island)     missing.push({ field: "Location",     hint: "Required for weather data and local recommendations" });
+  if (!userData.farmSize)             missing.push({ field: "Farm size",     hint: "Helps calculate planting needs" });
+  if (!userData.farmingType)          missing.push({ field: "Farming type",  hint: "Helps us customise your experience" });
   if (!userData.currentCrops?.length) missing.push({ field: "Current crops", hint: "Enables crop-aware weather alerts and planning tools" });
 
   if (missing.length === 0) return null;
@@ -116,13 +114,8 @@ const bannerStyles = {
     marginTop: "6px",
     flexShrink: 0,
   },
-  fieldName: {
-    fontWeight: "600",
-  },
-  fieldHint: {
-    color: "#92400E",
-    opacity: 0.8,
-  },
+  fieldName: { fontWeight: "600" },
+  fieldHint: { color: "#92400E", opacity: 0.8 },
   cta: {
     display: "inline-block",
     background: "#F59E0B",
@@ -201,7 +194,7 @@ export default function Dashboard() {
     }
   };
 
-if (loading) return <LoadingScreen />;
+  if (loading) return <LoadingScreen />;
 
   if (!userData) {
     return (
@@ -234,11 +227,10 @@ if (loading) return <LoadingScreen />;
         </p>
       </motion.div>
 
-      {/* Profile completion banner — only visible when fields are missing */}
-  {/* Profile completion banner — only visible when fields are missing */}
-  <AnimatePresence>
-     <ProfileCompletionBanner userData={{ ...userData, location: normalizedLocation }} />
-  </AnimatePresence>
+      <AnimatePresence>
+        <ProfileCompletionBanner userData={{ ...userData, location: normalizedLocation }} />
+      </AnimatePresence>
+
       <div style={styles.tabs}>
         {["overview", "planner", "weather", "resources"].map(tab => (
           <motion.button
@@ -269,9 +261,53 @@ if (loading) return <LoadingScreen />;
   );
 }
 
+// ── Overview Tab ──────────────────────────────────────────────────────────────
 function OverviewTab({ userData, activities }) {
   const weatherAlerts = activities.filter(a => a.type === "weather_alert");
-  const reminders = activities.filter(a => a.type === "reminder" && a.status !== "completed");
+
+  // Cloud Function-generated reminders
+  const cfReminders = activities.filter(a => a.type === "reminder" && a.status !== "completed");
+
+  // Derive upcoming tasks directly from saved crop plans (within next 21 days)
+  // so the section is populated even before dailyTasks has run for this user
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const in21Days = new Date(today.getTime() + 21 * 24 * 60 * 60 * 1000);
+
+  const planReminders = activities
+    .filter(a => a.type === "crop_plan" && a.status === "planned")
+    .flatMap(a => {
+      const tasks = [];
+      const cropName = a.data?.cropName || "Crop";
+
+      const check = (dateRaw, icon, label) => {
+        if (!dateRaw) return;
+        const date = dateRaw?.toDate ? dateRaw.toDate() : new Date(dateRaw);
+        if (date >= today && date <= in21Days) {
+          tasks.push({
+            id: `${a.id}-${label}`,
+            icon,
+            message: `${label} ${cropName}`,
+            scheduledFor: date,
+          });
+        }
+      };
+
+      check(a.data?.sowDate,        "🌱", "Sow");
+      check(a.data?.transplantDate, "🌿", "Transplant");
+      check(a.data?.harvestStart,   "🌾", "Harvest");
+      return tasks;
+    });
+
+  // Merge, deduplicate, sort by date ascending
+  const seen = new Set(cfReminders.map(r => r.id));
+  const reminders = [
+    ...cfReminders,
+    ...planReminders.filter(r => !seen.has(r.id)),
+  ].sort((a, b) => {
+    const da = a.scheduledFor?.toDate ? a.scheduledFor.toDate() : new Date(a.scheduledFor || 0);
+    const db_ = b.scheduledFor?.toDate ? b.scheduledFor.toDate() : new Date(b.scheduledFor || 0);
+    return da - db_;
+  });
 
   const plansFromActivities = activities
     .filter(a => a.type === "crop_plan")
@@ -363,7 +399,7 @@ function OverviewTab({ userData, activities }) {
               ))}
             </div>
           ) : (
-            <p style={styles.emptyState}>No upcoming tasks. Check the planner!</p>
+            <p style={styles.emptyState}>No upcoming tasks. Add a crop plan to get started!</p>
           )}
         </motion.div>
 
@@ -393,7 +429,7 @@ function OverviewTab({ userData, activities }) {
 function TaskItem({ reminder }) {
   const getDateLabel = (scheduledFor) => {
     if (!scheduledFor) return "Soon";
-    const date = scheduledFor.toDate ? scheduledFor.toDate() : new Date(scheduledFor);
+    const date = scheduledFor?.toDate ? scheduledFor.toDate() : new Date(scheduledFor);
     const today = new Date();
     const tomorrow = new Date(today);
     tomorrow.setDate(tomorrow.getDate() + 1);
@@ -507,6 +543,7 @@ function ResourcesTab() {
 
 const styles = {
   dashboard: { minHeight: "100vh", background: "var(--paper-cream)", padding: "2rem" },
+  loading: { minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", fontSize: "1.2rem", color: "#666" },
   header: { marginBottom: "2rem", textAlign: "center" },
   subtitle: { color: "#666", fontSize: "1rem", marginTop: "0.5rem", display: "flex", alignItems: "center", justifyContent: "center", gap: "0.5rem", flexWrap: "wrap" },
   premiumBadge: { background: "var(--soil-green)", color: "white", padding: "0.25rem 0.75rem", borderRadius: "12px", fontSize: "0.85rem", fontWeight: "600" },

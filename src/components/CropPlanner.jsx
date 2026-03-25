@@ -3,51 +3,6 @@ import { motion, AnimatePresence } from "framer-motion";
 import { db } from "../firebase";
 import { collection, addDoc, doc, updateDoc, arrayUnion, query, where, getDocs } from "firebase/firestore";
 
-const CROP_DATABASE = {
-  "Kale": {
-    weeksToHarvest: 8, weeksOfHarvest: 8, stalebedWeeks: 0, weeksInTrays: 3,
-    spacing: '3 rows, every 12"', sitesPerSowing: 300, sowingPerWeek: 6,
-    mulch: true, seedsPerSowing: 360, yieldPerBed: 100, yieldUnit: "lbs",
-    varieties: ["Darkibor", "Lacianato", "Kalettes"], emoji: "🥬"
-  },
-  "Romaine Lettuce": {
-    weeksToHarvest: 9, weeksOfHarvest: 1, stalebedWeeks: 0, weeksInTrays: 3,
-    spacing: '3 rows, every 10"', sitesPerSowing: 360, sowingPerWeek: 1,
-    mulch: true, seedsPerSowing: 432, yieldPerBed: 360, yieldUnit: "heads",
-    varieties: ["Salvius", "Muir"], emoji: "🥗"
-  },
-  "Asian Greens": {
-    weeksToHarvest: 3, weeksOfHarvest: 3, stalebedWeeks: 2, weeksInTrays: 0,
-    spacing: '6 row seeder', sitesPerSowing: 2, sowingPerWeek: 3,
-    mulch: false, seedsPerSowing: 2.4, yieldPerBed: 40, yieldUnit: "lbs",
-    varieties: ["Mizuna", "Tatsoi", "Red Giant"], emoji: "🌿"
-  },
-  "Swiss Chard": {
-    weeksToHarvest: 8, weeksOfHarvest: 8, stalebedWeeks: 0, weeksInTrays: 3,
-    spacing: '3 rows, every 12"', sitesPerSowing: 300, sowingPerWeek: 1,
-    mulch: true, seedsPerSowing: 400, yieldPerBed: 600, yieldUnit: "bunches",
-    varieties: ["Bright Lights"], emoji: "🌱"
-  },
-  "Zucchini": {
-    weeksToHarvest: 8, weeksOfHarvest: 5, stalebedWeeks: 0, weeksInTrays: 3,
-    spacing: '1 row, every 24"', sitesPerSowing: 50, sowingPerWeek: 1,
-    mulch: true, seedsPerSowing: 60, yieldPerBed: 200, yieldUnit: "lbs",
-    varieties: ["Tigress"], emoji: "🥒"
-  },
-  "Tomatoes": {
-    weeksToHarvest: 12, weeksOfHarvest: 8, stalebedWeeks: 0, weeksInTrays: 4,
-    spacing: '2 rows, every 18"', sitesPerSowing: 100, sowingPerWeek: 1,
-    mulch: true, seedsPerSowing: 120, yieldPerBed: 300, yieldUnit: "lbs",
-    varieties: ["Roma", "Cherry", "Beefsteak"], emoji: "🍅"
-  },
-  "Sweet Peppers": {
-    weeksToHarvest: 14, weeksOfHarvest: 6, stalebedWeeks: 0, weeksInTrays: 4,
-    spacing: '2 rows, every 18"', sitesPerSowing: 100, sowingPerWeek: 1,
-    mulch: true, seedsPerSowing: 120, yieldPerBed: 150, yieldUnit: "lbs",
-    varieties: ["Bell", "Sweet Banana"], emoji: "🫑"
-  }
-};
-
 // ── Moon phase helpers ────────────────────────────────────────────────────────
 const MOON_PHASES = [
   { name: "New Moon",        emoji: "🌑", type: "rest" },
@@ -102,6 +57,10 @@ export default function CropPlanner({ userData }) {
   const [savedPlans, setSavedPlans] = useState([]);
   const [loadingPlans, setLoadingPlans] = useState(true);
 
+  // Firestore crop database
+  const [cropDatabase, setCropDatabase] = useState({});
+  const [loadingCrops, setLoadingCrops] = useState(true);
+
   // Form state
   const [selectedCrop, setSelectedCrop] = useState("");
   const [startDate, setStartDate] = useState(new Date().toISOString().split('T')[0]);
@@ -113,6 +72,25 @@ export default function CropPlanner({ userData }) {
   const [moonMode, setMoonMode] = useState(false);
 
   const currentMoon = getMoonPhase(new Date(startDate));
+
+  // Fetch crop database from Firestore
+  useEffect(() => {
+    const fetchCrops = async () => {
+      try {
+        const snap = await getDocs(collection(db, "crops"));
+        const data = {};
+        snap.docs.forEach(d => {
+          data[d.data().name] = { id: d.id, ...d.data() };
+        });
+        setCropDatabase(data);
+      } catch (e) {
+        console.error("Error fetching crop database:", e);
+      } finally {
+        setLoadingCrops(false);
+      }
+    };
+    fetchCrops();
+  }, []);
 
   // Fetch saved plans from activities
   useEffect(() => {
@@ -171,18 +149,18 @@ export default function CropPlanner({ userData }) {
 
   const generateSchedule = () => {
     if (!validateInputs()) return;
-    const crop = CROP_DATABASE[selectedCrop];
+    const crop = cropDatabase[selectedCrop];
     const start = new Date(startDate);
-    const totalCycle = crop.weeksToHarvest + crop.weeksOfHarvest + crop.stalebedWeeks;
+    const totalCycle = crop.weeksToHarvest + crop.weeksOfHarvest + (crop.stalebedWeeks || 0);
     const traySowDate = new Date(start);
     const transplantDate = new Date(start);
-    transplantDate.setDate(transplantDate.getDate() + crop.weeksInTrays * 7);
+    transplantDate.setDate(transplantDate.getDate() + (crop.weeksInTrays || 0) * 7);
     const harvestStartDate = new Date(start);
     harvestStartDate.setDate(harvestStartDate.getDate() + crop.weeksToHarvest * 7);
     const harvestEndDate = new Date(harvestStartDate);
     harvestEndDate.setDate(harvestEndDate.getDate() + crop.weeksOfHarvest * 7);
     const bedTurnoverDate = new Date(harvestEndDate);
-    bedTurnoverDate.setDate(bedTurnoverDate.getDate() + crop.stalebedWeeks * 7);
+    bedTurnoverDate.setDate(bedTurnoverDate.getDate() + (crop.stalebedWeeks || 0) * 7);
     const cyclesPerYear = Math.floor(growingSeasonWeeks / totalCycle);
     const totalYield = crop.yieldPerBed * numBeds * cyclesPerYear;
     const successionInterval = Math.ceil(totalCycle / 2);
@@ -190,24 +168,24 @@ export default function CropPlanner({ userData }) {
       crop: selectedCrop,
       cropData: crop,
       traySowDate: traySowDate.toLocaleDateString(),
-      transplantDate: crop.weeksInTrays > 0 ? transplantDate.toLocaleDateString() : null,
+      transplantDate: (crop.weeksInTrays || 0) > 0 ? transplantDate.toLocaleDateString() : null,
       harvestStartDate: harvestStartDate.toLocaleDateString(),
       harvestEndDate: harvestEndDate.toLocaleDateString(),
-      bedTurnoverDate: crop.stalebedWeeks > 0 ? bedTurnoverDate.toLocaleDateString() : null,
+      bedTurnoverDate: (crop.stalebedWeeks || 0) > 0 ? bedTurnoverDate.toLocaleDateString() : null,
       totalCycleWeeks: totalCycle,
       cyclesPerYear,
       numBeds,
-      totalSeeds: crop.seedsPerSowing * numBeds,
-      totalSeedsForYear: crop.seedsPerSowing * numBeds * cyclesPerYear,
+      totalSeeds: (crop.seedsPerSowing || 0) * numBeds,
+      totalSeedsForYear: (crop.seedsPerSowing || 0) * numBeds * cyclesPerYear,
       estimatedYield: `${totalYield.toLocaleString()} ${crop.yieldUnit}`,
       yieldPerCycle: `${(crop.yieldPerBed * numBeds).toLocaleString()} ${crop.yieldUnit}`,
       successionInterval,
       sowDate: traySowDate,
-      transplantDateObj: crop.weeksInTrays > 0 ? transplantDate : null,
+      transplantDateObj: (crop.weeksInTrays || 0) > 0 ? transplantDate : null,
       harvestDate: harvestStartDate,
       moon: moonMode ? {
         sow: getMoonPhase(traySowDate),
-        transplant: crop.weeksInTrays > 0 ? getMoonPhase(transplantDate) : null,
+        transplant: (crop.weeksInTrays || 0) > 0 ? getMoonPhase(transplantDate) : null,
         harvest: getMoonPhase(harvestStartDate),
       } : null,
     });
@@ -295,7 +273,7 @@ export default function CropPlanner({ userData }) {
         ) : (
           <div style={s.cropGrid}>
             {activeCrops.map((crop, i) => (
-              <ActiveCropCard key={crop.id} crop={crop} index={i} />
+              <ActiveCropCard key={crop.id} crop={crop} index={i} cropDatabase={cropDatabase} />
             ))}
           </div>
         )}
@@ -352,26 +330,32 @@ export default function CropPlanner({ userData }) {
               {/* Form */}
               <div style={s.formGroup}>
                 <label style={s.label}>Crop *</label>
-                <select
-                  value={selectedCrop}
-                  onChange={e => { setSelectedCrop(e.target.value); setErrors({ ...errors, crop: null }); setSchedule(null); }}
-                  style={{ ...s.input, borderColor: errors.crop ? "#ef4444" : "#ddd" }}
-                >
-                  <option value="">Choose a crop…</option>
-                  {Object.keys(CROP_DATABASE).map(c => (
-                    <option key={c} value={c}>{CROP_DATABASE[c].emoji} {c}</option>
-                  ))}
-                </select>
+                {loadingCrops ? (
+                  <div style={s.cropLoadingHint}>Loading crops…</div>
+                ) : (
+                  <select
+                    value={selectedCrop}
+                    onChange={e => { setSelectedCrop(e.target.value); setErrors({ ...errors, crop: null }); setSchedule(null); }}
+                    style={{ ...s.input, borderColor: errors.crop ? "#ef4444" : "#ddd" }}
+                  >
+                    <option value="">Choose a crop…</option>
+                    {Object.keys(cropDatabase).sort().map(name => (
+                      <option key={name} value={name}>
+                        {cropDatabase[name].emoji} {name}
+                      </option>
+                    ))}
+                  </select>
+                )}
                 {errors.crop && <span style={s.errorText}>{errors.crop}</span>}
               </div>
 
               {/* Crop quick info */}
-              {selectedCrop && CROP_DATABASE[selectedCrop] && (
+              {selectedCrop && cropDatabase[selectedCrop] && (
                 <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} style={s.quickInfo}>
-                  <QuickStat label="Weeks to harvest" value={CROP_DATABASE[selectedCrop].weeksToHarvest} />
-                  <QuickStat label="Yield per bed" value={`${CROP_DATABASE[selectedCrop].yieldPerBed} ${CROP_DATABASE[selectedCrop].yieldUnit}`} />
-                  <QuickStat label="Mulch" value={CROP_DATABASE[selectedCrop].mulch ? "Yes" : "No"} />
-                  <QuickStat label="Varieties" value={CROP_DATABASE[selectedCrop].varieties.join(", ")} />
+                  <QuickStat label="Weeks to harvest" value={cropDatabase[selectedCrop].weeksToHarvest} />
+                  <QuickStat label="Yield per bed" value={`${cropDatabase[selectedCrop].yieldPerBed} ${cropDatabase[selectedCrop].yieldUnit}`} />
+                  <QuickStat label="Mulch" value={cropDatabase[selectedCrop].mulch ? "Yes" : "No"} />
+                  <QuickStat label="Varieties" value={(cropDatabase[selectedCrop].varieties || []).join(", ")} />
                 </motion.div>
               )}
 
@@ -408,11 +392,15 @@ export default function CropPlanner({ userData }) {
                 />
               </div>
 
-              <button onClick={generateSchedule} style={s.generateBtn}>
+              <button
+                onClick={generateSchedule}
+                disabled={loadingCrops}
+                style={{ ...s.generateBtn, opacity: loadingCrops ? 0.6 : 1 }}
+              >
                 Generate Schedule
               </button>
 
-              {/* Schedule output — inline in modal */}
+              {/* Schedule output */}
               {schedule && (
                 <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} style={s.scheduleBox}>
                   <h4 style={s.scheduleTitle}>🗓️ Planting Schedule</h4>
@@ -460,12 +448,14 @@ export default function CropPlanner({ userData }) {
 }
 
 // ── Active Crop Card ──────────────────────────────────────────────────────────
-function ActiveCropCard({ crop, index }) {
-  const db = CROP_DATABASE[crop.cropName];
-  const weeksToHarvest = db?.weeksToHarvest || 8;
+function ActiveCropCard({ crop, index, cropDatabase }) {
+  const dbEntry = cropDatabase[crop.cropName];
+  const weeksToHarvest = dbEntry?.weeksToHarvest || 8;
   const daysLeft = getDaysToHarvest(crop.sowDate, weeksToHarvest);
   const progress = getProgressPercent(crop.sowDate, weeksToHarvest);
-  const emoji = db?.emoji || "🌱";
+  // Use crop initial as fallback so no box/unknown-character rendering
+  const emoji = dbEntry?.emoji || null;
+  const fallbackInitial = crop.cropName?.charAt(0).toUpperCase() || "C";
 
   const harvestLabel = daysLeft === null
     ? "No sow date recorded"
@@ -487,7 +477,9 @@ function ActiveCropCard({ crop, index }) {
       style={s.cropCard}
     >
       <div style={s.cropCardTop}>
-        <span style={s.cropEmoji}>{emoji}</span>
+        <span style={s.cropEmoji}>
+          {emoji || <span style={s.cropEmojiInitial}>{fallbackInitial}</span>}
+        </span>
         <div style={s.cropCardInfo}>
           <div style={s.cropName}>{crop.cropName}</div>
           {crop.numBeds && (
@@ -580,6 +572,7 @@ const s = {
   emptyText: { fontWeight: "600", color: "var(--ink-black)", margin: "0.75rem 0 0.25rem" },
   emptySubtext: { color: "#999", fontSize: "0.9rem", margin: 0 },
   emptyState: { color: "#999", fontSize: "0.9rem", padding: "1rem 0" },
+  cropLoadingHint: { color: "#999", fontSize: "0.9rem", padding: "0.5rem 0" },
 
   // Crop grid
   cropGrid: {
@@ -596,6 +589,12 @@ const s = {
   },
   cropCardTop: { display: "flex", alignItems: "center", gap: "0.75rem" },
   cropEmoji: { fontSize: "2rem", lineHeight: 1 },
+  cropEmojiInitial: {
+    display: "inline-flex", alignItems: "center", justifyContent: "center",
+    width: "2rem", height: "2rem", borderRadius: "50%",
+    background: "var(--soil-green)", color: "white",
+    fontSize: "1rem", fontWeight: "700", lineHeight: 1
+  },
   cropCardInfo: { flex: 1 },
   cropName: { fontWeight: "700", fontSize: "1rem", color: "var(--ink-black)" },
   cropMeta: { fontSize: "0.8rem", color: "#999", marginTop: "2px" },
