@@ -1,70 +1,70 @@
-import React, { useState } from "react";
-import { motion } from "framer-motion";
+import React, { useState, useEffect } from "react";
+import { motion, AnimatePresence } from "framer-motion";
 import { db } from "../firebase";
-import { collection, addDoc, doc, updateDoc, arrayUnion } from "firebase/firestore";
+import { collection, addDoc, doc, updateDoc, arrayUnion, query, where, getDocs } from "firebase/firestore";
 
 const CROP_DATABASE = {
   "Kale": {
     weeksToHarvest: 8, weeksOfHarvest: 8, stalebedWeeks: 0, weeksInTrays: 3,
     spacing: '3 rows, every 12"', sitesPerSowing: 300, sowingPerWeek: 6,
     mulch: true, seedsPerSowing: 360, yieldPerBed: 100, yieldUnit: "lbs",
-    varieties: ["Darkibor", "Lacianato", "Kalettes"]
+    varieties: ["Darkibor", "Lacianato", "Kalettes"], emoji: "🥬"
   },
   "Romaine Lettuce": {
     weeksToHarvest: 9, weeksOfHarvest: 1, stalebedWeeks: 0, weeksInTrays: 3,
     spacing: '3 rows, every 10"', sitesPerSowing: 360, sowingPerWeek: 1,
     mulch: true, seedsPerSowing: 432, yieldPerBed: 360, yieldUnit: "heads",
-    varieties: ["Salvius", "Muir"]
+    varieties: ["Salvius", "Muir"], emoji: "🥗"
   },
   "Asian Greens": {
     weeksToHarvest: 3, weeksOfHarvest: 3, stalebedWeeks: 2, weeksInTrays: 0,
     spacing: '6 row seeder', sitesPerSowing: 2, sowingPerWeek: 3,
     mulch: false, seedsPerSowing: 2.4, yieldPerBed: 40, yieldUnit: "lbs",
-    varieties: ["Mizuna", "Tatsoi", "Red Giant"]
+    varieties: ["Mizuna", "Tatsoi", "Red Giant"], emoji: "🌿"
   },
   "Swiss Chard": {
     weeksToHarvest: 8, weeksOfHarvest: 8, stalebedWeeks: 0, weeksInTrays: 3,
     spacing: '3 rows, every 12"', sitesPerSowing: 300, sowingPerWeek: 1,
     mulch: true, seedsPerSowing: 400, yieldPerBed: 600, yieldUnit: "bunches",
-    varieties: ["Bright Lights"]
+    varieties: ["Bright Lights"], emoji: "🌱"
   },
   "Zucchini": {
     weeksToHarvest: 8, weeksOfHarvest: 5, stalebedWeeks: 0, weeksInTrays: 3,
     spacing: '1 row, every 24"', sitesPerSowing: 50, sowingPerWeek: 1,
     mulch: true, seedsPerSowing: 60, yieldPerBed: 200, yieldUnit: "lbs",
-    varieties: ["Tigress"]
+    varieties: ["Tigress"], emoji: "🥒"
   },
   "Tomatoes": {
     weeksToHarvest: 12, weeksOfHarvest: 8, stalebedWeeks: 0, weeksInTrays: 4,
     spacing: '2 rows, every 18"', sitesPerSowing: 100, sowingPerWeek: 1,
     mulch: true, seedsPerSowing: 120, yieldPerBed: 300, yieldUnit: "lbs",
-    varieties: ["Roma", "Cherry", "Beefsteak"]
+    varieties: ["Roma", "Cherry", "Beefsteak"], emoji: "🍅"
   },
   "Sweet Peppers": {
     weeksToHarvest: 14, weeksOfHarvest: 6, stalebedWeeks: 0, weeksInTrays: 4,
     spacing: '2 rows, every 18"', sitesPerSowing: 100, sowingPerWeek: 1,
     mulch: true, seedsPerSowing: 120, yieldPerBed: 150, yieldUnit: "lbs",
-    varieties: ["Bell", "Sweet Banana"]
+    varieties: ["Bell", "Sweet Banana"], emoji: "🫑"
   }
 };
 
-// ── Moon phase helpers ──────────────────────────────────────────────────────
+// ── Moon phase helpers ────────────────────────────────────────────────────────
 const MOON_PHASES = [
-  { name: "New Moon",         emoji: "🌑", type: "rest" },
-  { name: "Waxing Crescent",  emoji: "🌒", type: "leaf" },
-  { name: "First Quarter",    emoji: "🌓", type: "leaf" },
-  { name: "Waxing Gibbous",   emoji: "🌔", type: "fruit" },
-  { name: "Full Moon",        emoji: "🌕", type: "fruit" },
-  { name: "Waning Gibbous",   emoji: "🌖", type: "root" },
-  { name: "Last Quarter",     emoji: "🌗", type: "root" },
-  { name: "Waning Crescent",  emoji: "🌘", type: "rest" },
+  { name: "New Moon",        emoji: "🌑", type: "rest" },
+  { name: "Waxing Crescent", emoji: "🌒", type: "leaf" },
+  { name: "First Quarter",   emoji: "🌓", type: "leaf" },
+  { name: "Waxing Gibbous",  emoji: "🌔", type: "fruit" },
+  { name: "Full Moon",       emoji: "🌕", type: "fruit" },
+  { name: "Waning Gibbous",  emoji: "🌖", type: "root" },
+  { name: "Last Quarter",    emoji: "🌗", type: "root" },
+  { name: "Waning Crescent", emoji: "🌘", type: "rest" },
 ];
 
 const MOON_TYPE_ADVICE = {
-  leaf:  { label: "Leaf Day",   color: "#5A9F6E", tip: "Ideal for sowing and transplanting leafy crops." },
-  fruit: { label: "Fruit Day",  color: "#E6A93C", tip: "Best for sowing fruiting crops (tomatoes, peppers, cucumbers)." },
-  root:  { label: "Root Day",   color: "#9B6B3A", tip: "Good for root vegetables and harvesting." },
-  rest:  { label: "Rest Day",   color: "#9B9BB4", tip: "Avoid planting. Focus on soil prep and composting." },
+  leaf:  { label: "Leaf Day",  color: "#5A9F6E", tip: "Ideal for sowing and transplanting leafy crops." },
+  fruit: { label: "Fruit Day", color: "#E6A93C", tip: "Best for sowing fruiting crops (tomatoes, peppers, cucumbers)." },
+  root:  { label: "Root Day",  color: "#9B6B3A", tip: "Good for root vegetables and harvesting." },
+  rest:  { label: "Rest Day",  color: "#9B9BB4", tip: "Avoid planting. Focus on soil prep and composting." },
 };
 
 function getMoonPhase(date) {
@@ -77,12 +77,32 @@ function getMoonPhase(date) {
   return { ...phase, ...MOON_TYPE_ADVICE[phase.type], position };
 }
 
-function getMoonForDate(dateObj) {
-  return getMoonPhase(dateObj);
+// ── Active crop card helpers ──────────────────────────────────────────────────
+function getDaysToHarvest(sowDateRaw, weeksToHarvest) {
+  if (!sowDateRaw) return null;
+  const sow = sowDateRaw?.toDate ? sowDateRaw.toDate() : new Date(sowDateRaw);
+  const harvest = new Date(sow);
+  harvest.setDate(harvest.getDate() + weeksToHarvest * 7);
+  const today = new Date();
+  const diff = Math.ceil((harvest - today) / (1000 * 60 * 60 * 24));
+  return diff;
 }
-// ───────────────────────────────────────────────────────────────────────────
 
+function getProgressPercent(sowDateRaw, weeksToHarvest) {
+  if (!sowDateRaw) return 0;
+  const sow = sowDateRaw?.toDate ? sowDateRaw.toDate() : new Date(sowDateRaw);
+  const totalDays = weeksToHarvest * 7;
+  const elapsed = Math.ceil((new Date() - sow) / (1000 * 60 * 60 * 24));
+  return Math.min(100, Math.max(0, Math.round((elapsed / totalDays) * 100)));
+}
+
+// ── Main Component ────────────────────────────────────────────────────────────
 export default function CropPlanner({ userData }) {
+  const [showModal, setShowModal] = useState(false);
+  const [savedPlans, setSavedPlans] = useState([]);
+  const [loadingPlans, setLoadingPlans] = useState(true);
+
+  // Form state
   const [selectedCrop, setSelectedCrop] = useState("");
   const [startDate, setStartDate] = useState(new Date().toISOString().split('T')[0]);
   const [numBeds, setNumBeds] = useState(1);
@@ -92,8 +112,51 @@ export default function CropPlanner({ userData }) {
   const [errors, setErrors] = useState({});
   const [moonMode, setMoonMode] = useState(false);
 
-  // Current moon phase for the selected start date
-  const currentMoon = getMoonForDate(new Date(startDate));
+  const currentMoon = getMoonPhase(new Date(startDate));
+
+  // Fetch saved plans from activities
+  useEffect(() => {
+    if (!userData?.userId) { setLoadingPlans(false); return; }
+    const fetchPlans = async () => {
+      try {
+        const q = query(
+          collection(db, "activities"),
+          where("userId", "==", userData.userId),
+          where("type", "==", "crop_plan")
+        );
+        const snap = await getDocs(q);
+        setSavedPlans(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+      } catch (e) {
+        console.error("Error fetching plans:", e);
+      } finally {
+        setLoadingPlans(false);
+      }
+    };
+    fetchPlans();
+  }, [userData?.userId]);
+
+  // Merge currentCrops from profile + saved plans into one unified list
+  const profileCrops = (userData?.currentCrops || []).map(name => ({
+    id: `profile-${name}`,
+    cropName: name,
+    sowDate: null,
+    source: "profile"
+  }));
+
+  const planCrops = savedPlans.map(p => ({
+    id: p.id,
+    cropName: p.data?.cropName || p.title?.replace(" Planting Plan", "") || "Unknown",
+    sowDate: p.data?.sowDate || null,
+    harvestStart: p.data?.harvestStart || null,
+    numBeds: p.data?.numBeds || 1,
+    estimatedYield: p.data?.estimatedYield || null,
+    source: "plan"
+  }));
+
+  // Deduplicate — plans take priority over plain profile crops
+  const planCropNames = new Set(planCrops.map(p => p.cropName));
+  const filteredProfileCrops = profileCrops.filter(c => !planCropNames.has(c.cropName));
+  const activeCrops = [...planCrops, ...filteredProfileCrops];
 
   const validateInputs = () => {
     const newErrors = {};
@@ -108,25 +171,21 @@ export default function CropPlanner({ userData }) {
 
   const generateSchedule = () => {
     if (!validateInputs()) return;
-
     const crop = CROP_DATABASE[selectedCrop];
     const start = new Date(startDate);
     const totalCycle = crop.weeksToHarvest + crop.weeksOfHarvest + crop.stalebedWeeks;
-
     const traySowDate = new Date(start);
     const transplantDate = new Date(start);
-    transplantDate.setDate(transplantDate.getDate() + (crop.weeksInTrays * 7));
+    transplantDate.setDate(transplantDate.getDate() + crop.weeksInTrays * 7);
     const harvestStartDate = new Date(start);
-    harvestStartDate.setDate(harvestStartDate.getDate() + (crop.weeksToHarvest * 7));
+    harvestStartDate.setDate(harvestStartDate.getDate() + crop.weeksToHarvest * 7);
     const harvestEndDate = new Date(harvestStartDate);
-    harvestEndDate.setDate(harvestEndDate.getDate() + (crop.weeksOfHarvest * 7));
+    harvestEndDate.setDate(harvestEndDate.getDate() + crop.weeksOfHarvest * 7);
     const bedTurnoverDate = new Date(harvestEndDate);
-    bedTurnoverDate.setDate(bedTurnoverDate.getDate() + (crop.stalebedWeeks * 7));
-
+    bedTurnoverDate.setDate(bedTurnoverDate.getDate() + crop.stalebedWeeks * 7);
     const cyclesPerYear = Math.floor(growingSeasonWeeks / totalCycle);
     const totalYield = crop.yieldPerBed * numBeds * cyclesPerYear;
     const successionInterval = Math.ceil(totalCycle / 2);
-
     setSchedule({
       crop: selectedCrop,
       cropData: crop,
@@ -146,11 +205,10 @@ export default function CropPlanner({ userData }) {
       sowDate: traySowDate,
       transplantDateObj: crop.weeksInTrays > 0 ? transplantDate : null,
       harvestDate: harvestStartDate,
-      // Moon phases for each key date (only computed when moonMode is on)
       moon: moonMode ? {
-        sow:       getMoonForDate(traySowDate),
-        transplant: crop.weeksInTrays > 0 ? getMoonForDate(transplantDate) : null,
-        harvest:   getMoonForDate(harvestStartDate),
+        sow: getMoonPhase(traySowDate),
+        transplant: crop.weeksInTrays > 0 ? getMoonPhase(transplantDate) : null,
+        harvest: getMoonPhase(harvestStartDate),
       } : null,
     });
   };
@@ -160,7 +218,7 @@ export default function CropPlanner({ userData }) {
     if (!schedule) { alert("Please generate a schedule first"); return; }
     setSaving(true);
     try {
-      await addDoc(collection(db, "activities"), {
+      const docRef = await addDoc(collection(db, "activities"), {
         userId: userData.userId,
         type: "crop_plan",
         category: "farming",
@@ -188,14 +246,25 @@ export default function CropPlanner({ userData }) {
         createdAt: new Date(),
         expiresAt: null
       });
-
       await updateDoc(doc(db, "users", userData.userId), {
         currentCrops: arrayUnion(schedule.crop),
         "stats.cropsPlanted": (userData.stats?.cropsPlanted || 0) + 1,
       });
-
-      alert("✅ Plan saved successfully! Check your dashboard.");
+      // Add to local state immediately so card appears without refetch
+      setSavedPlans(prev => [...prev, {
+        id: docRef.id,
+        data: {
+          cropName: schedule.crop,
+          sowDate: schedule.sowDate,
+          harvestStart: schedule.harvestDate,
+          numBeds: schedule.numBeds,
+          estimatedYield: schedule.estimatedYield,
+        }
+      }]);
       setSaving(false);
+      setShowModal(false);
+      setSchedule(null);
+      setSelectedCrop("");
     } catch (error) {
       console.error("Error saving plan:", error);
       alert("Failed to save plan. Please try again.");
@@ -204,340 +273,440 @@ export default function CropPlanner({ userData }) {
   };
 
   return (
-    <div style={styles.planner}>
-      {/* Input Section */}
-      <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} style={styles.inputSection}>
+    <div style={s.root}>
 
-        {/* Card header: title + moon toggle pill */}
-        <div style={styles.cardHeader}>
-          <h3 style={styles.cardTitle}>Plan Your Crop</h3>
-          <button
-            onClick={() => setMoonMode(m => !m)}
-            style={{ ...styles.moonChip, ...(moonMode ? styles.moonChipOn : {}) }}
-            title="Toggle biodynamic moon phase planning"
-          >
-            {moonMode ? `${currentMoon.emoji} Moon On` : "🌑 Moon"}
+      {/* ── Active Crops ───────────────────────────────────────────────── */}
+      <section style={s.section}>
+        <div style={s.sectionHeader}>
+          <h3 style={s.sectionTitle}>Active Crops</h3>
+          <button style={s.addBtn} onClick={() => { setShowModal(true); setSchedule(null); }}>
+            + Add a crop
           </button>
         </div>
 
-        {/* Moon phase hint — shown inline below the header when moon mode is active */}
-        {moonMode && (
+        {loadingPlans ? (
+          <div style={s.emptyState}>Loading your crops…</div>
+        ) : activeCrops.length === 0 ? (
+          <div style={s.emptyCard}>
+            <span style={s.emptyIcon}>🌱</span>
+            <p style={s.emptyText}>No crops added yet.</p>
+            <p style={s.emptySubtext}>Tap "Add a crop" to plan your first planting.</p>
+          </div>
+        ) : (
+          <div style={s.cropGrid}>
+            {activeCrops.map((crop, i) => (
+              <ActiveCropCard key={crop.id} crop={crop} index={i} />
+            ))}
+          </div>
+        )}
+      </section>
+
+      {/* ── Modal ─────────────────────────────────────────────────────── */}
+      <AnimatePresence>
+        {showModal && (
           <motion.div
-            initial={{ opacity: 0, y: -4 }}
-            animate={{ opacity: 1, y: 0 }}
-            style={{ ...styles.moonHint, borderLeft: `3px solid ${currentMoon.color}` }}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            style={s.overlay}
+            onClick={e => { if (e.target === e.currentTarget) setShowModal(false); }}
           >
-            <span style={styles.moonHintEmoji}>{currentMoon.emoji}</span>
-            <div>
-              <span style={{ fontWeight: 600, color: currentMoon.color }}>{currentMoon.name} · {currentMoon.label}</span>
-              <p style={styles.moonHintText}>{currentMoon.tip}</p>
-            </div>
+            <motion.div
+              initial={{ opacity: 0, y: 40 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 40 }}
+              transition={{ type: "spring", damping: 24, stiffness: 280 }}
+              style={s.modal}
+            >
+              <div style={s.modalHeader}>
+                <h3 style={s.modalTitle}>Plan a Crop</h3>
+                <button style={s.closeBtn} onClick={() => setShowModal(false)}>✕</button>
+              </div>
+
+              {/* Moon toggle */}
+              <div style={s.moonRow}>
+                <button
+                  onClick={() => setMoonMode(m => !m)}
+                  style={{ ...s.moonChip, ...(moonMode ? s.moonChipOn : {}) }}
+                >
+                  {moonMode ? `${currentMoon.emoji} Moon On` : "🌑 Moon Planning"}
+                </button>
+              </div>
+
+              {moonMode && (
+                <motion.div
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: "auto" }}
+                  style={{ ...s.moonHint, borderLeft: `3px solid ${currentMoon.color}` }}
+                >
+                  <span style={{ fontSize: "1.4rem" }}>{currentMoon.emoji}</span>
+                  <div>
+                    <div style={{ fontWeight: 600, color: currentMoon.color, fontSize: "0.9rem" }}>
+                      {currentMoon.name} · {currentMoon.label}
+                    </div>
+                    <div style={{ fontSize: "0.82rem", color: "#666", marginTop: 2 }}>{currentMoon.tip}</div>
+                  </div>
+                </motion.div>
+              )}
+
+              {/* Form */}
+              <div style={s.formGroup}>
+                <label style={s.label}>Crop *</label>
+                <select
+                  value={selectedCrop}
+                  onChange={e => { setSelectedCrop(e.target.value); setErrors({ ...errors, crop: null }); setSchedule(null); }}
+                  style={{ ...s.input, borderColor: errors.crop ? "#ef4444" : "#ddd" }}
+                >
+                  <option value="">Choose a crop…</option>
+                  {Object.keys(CROP_DATABASE).map(c => (
+                    <option key={c} value={c}>{CROP_DATABASE[c].emoji} {c}</option>
+                  ))}
+                </select>
+                {errors.crop && <span style={s.errorText}>{errors.crop}</span>}
+              </div>
+
+              {/* Crop quick info */}
+              {selectedCrop && CROP_DATABASE[selectedCrop] && (
+                <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} style={s.quickInfo}>
+                  <QuickStat label="Weeks to harvest" value={CROP_DATABASE[selectedCrop].weeksToHarvest} />
+                  <QuickStat label="Yield per bed" value={`${CROP_DATABASE[selectedCrop].yieldPerBed} ${CROP_DATABASE[selectedCrop].yieldUnit}`} />
+                  <QuickStat label="Mulch" value={CROP_DATABASE[selectedCrop].mulch ? "Yes" : "No"} />
+                  <QuickStat label="Varieties" value={CROP_DATABASE[selectedCrop].varieties.join(", ")} />
+                </motion.div>
+              )}
+
+              <div style={s.formRow}>
+                <div style={{ flex: 1 }}>
+                  <label style={s.label}>Start Date *</label>
+                  <input
+                    type="date" value={startDate}
+                    onChange={e => { setStartDate(e.target.value); setErrors({ ...errors, date: null }); setSchedule(null); }}
+                    style={{ ...s.input, borderColor: errors.date ? "#ef4444" : "#ddd" }}
+                  />
+                  {errors.date && <span style={s.errorText}>{errors.date}</span>}
+                </div>
+                <div style={{ width: "110px" }}>
+                  <label style={s.label}>Beds *</label>
+                  <input
+                    type="number" min="1" max="100" value={numBeds}
+                    onChange={e => { setNumBeds(parseInt(e.target.value) || 1); setErrors({ ...errors, beds: null }); setSchedule(null); }}
+                    style={{ ...s.input, borderColor: errors.beds ? "#ef4444" : "#ddd" }}
+                  />
+                  {errors.beds && <span style={s.errorText}>{errors.beds}</span>}
+                </div>
+              </div>
+
+              <div style={s.formGroup}>
+                <label style={s.label}>
+                  Growing Season (weeks)
+                  <span style={s.labelHint}> — adjust for your climate</span>
+                </label>
+                <input
+                  type="number" min="12" max="52" value={growingSeasonWeeks}
+                  onChange={e => setGrowingSeasonWeeks(parseInt(e.target.value) || 52)}
+                  style={s.input}
+                />
+              </div>
+
+              <button onClick={generateSchedule} style={s.generateBtn}>
+                Generate Schedule
+              </button>
+
+              {/* Schedule output — inline in modal */}
+              {schedule && (
+                <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} style={s.scheduleBox}>
+                  <h4 style={s.scheduleTitle}>🗓️ Planting Schedule</h4>
+
+                  <div style={s.timelineList}>
+                    <TimelineRow icon="🌱" label="Sow" date={schedule.traySowDate} moon={schedule.moon?.sow} color="#7FB34D" />
+                    {schedule.transplantDate && (
+                      <TimelineRow icon="🌿" label="Transplant" date={schedule.transplantDate} moon={schedule.moon?.transplant} color="#5A9F6E" />
+                    )}
+                    <TimelineRow icon="🌾" label="Harvest begins" date={schedule.harvestStartDate} moon={schedule.moon?.harvest} color="#E6A93C" />
+                    <TimelineRow icon="✅" label="Harvest ends" date={schedule.harvestEndDate} color="#EFA8B8" />
+                    {schedule.bedTurnoverDate && (
+                      <TimelineRow icon="🔄" label="Bed ready" date={schedule.bedTurnoverDate} color="#9B59B6" />
+                    )}
+                  </div>
+
+                  <div style={s.yieldBox}>
+                    <YieldStat label="Yield this cycle" value={schedule.yieldPerCycle} />
+                    <YieldStat label="Annual yield" value={schedule.estimatedYield} />
+                    <YieldStat label="Cycles/year" value={schedule.cyclesPerYear} />
+                    <YieldStat label="New sowing every" value={`${schedule.successionInterval} wks`} />
+                  </div>
+
+                  <div style={s.seedNote}>
+                    🌰 Order ~{Math.ceil(schedule.totalSeeds * 1.2).toLocaleString()} seeds for this cycle
+                    ({Math.ceil(schedule.totalSeedsForYear * 1.2).toLocaleString()} for the full year)
+                    {schedule.cropData.mulch && " · Mulch required"}
+                  </div>
+
+                  <button
+                    onClick={savePlan}
+                    disabled={saving}
+                    style={{ ...s.saveBtn, opacity: saving ? 0.7 : 1 }}
+                  >
+                    {saving ? "Saving…" : "💾 Save to My Planner"}
+                  </button>
+                </motion.div>
+              )}
+            </motion.div>
           </motion.div>
         )}
-
-        <label style={styles.label}>Select Crop *</label>
-        <select
-          value={selectedCrop}
-          onChange={(e) => { setSelectedCrop(e.target.value); setErrors({...errors, crop: null}); }}
-          style={{ ...styles.select, borderColor: errors.crop ? "#ff4444" : "#ddd" }}
-        >
-          <option value="">-- Choose a crop --</option>
-          {Object.keys(CROP_DATABASE).map(crop => (
-            <option key={crop} value={crop}>{crop}</option>
-          ))}
-        </select>
-        {errors.crop && <span style={styles.error}>{errors.crop}</span>}
-
-        <label style={styles.label}>Start Date *</label>
-        <input
-          type="date" value={startDate}
-          onChange={(e) => { setStartDate(e.target.value); setErrors({...errors, date: null}); }}
-          style={{ ...styles.input, borderColor: errors.date ? "#ff4444" : "#ddd" }}
-        />
-        {errors.date && <span style={styles.error}>{errors.date}</span>}
-
-        <label style={styles.label}>Number of Beds *</label>
-        <input
-          type="number" min="1" max="100" value={numBeds}
-          onChange={(e) => { setNumBeds(parseInt(e.target.value) || 1); setErrors({...errors, beds: null}); }}
-          style={{ ...styles.input, borderColor: errors.beds ? "#ff4444" : "#ddd" }}
-        />
-        {errors.beds && <span style={styles.error}>{errors.beds}</span>}
-
-        <label style={styles.label}>
-          Growing Season (weeks)
-          <span style={styles.helpText}>Adjust for your climate</span>
-        </label>
-        <input
-          type="number" min="12" max="52" value={growingSeasonWeeks}
-          onChange={(e) => setGrowingSeasonWeeks(parseInt(e.target.value) || 52)}
-          style={styles.input}
-        />
-
-        <button onClick={generateSchedule} style={styles.generateButton}>
-          Generate Planting Schedule
-        </button>
-      </motion.div>
-
-      {/* Crop Info Card */}
-      {selectedCrop && CROP_DATABASE[selectedCrop] && (
-        <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} style={styles.infoCard}>
-          <h3>📋 {selectedCrop} Info</h3>
-          <div style={styles.infoGrid}>
-            <InfoItem label="Weeks to Harvest" value={CROP_DATABASE[selectedCrop].weeksToHarvest} />
-            <InfoItem label="Harvest Window" value={`${CROP_DATABASE[selectedCrop].weeksOfHarvest} weeks`} />
-            <InfoItem label="Spacing" value={CROP_DATABASE[selectedCrop].spacing} />
-            <InfoItem label="Mulch Required" value={CROP_DATABASE[selectedCrop].mulch ? "Yes" : "No"} />
-            <InfoItem label="Seeds per Bed" value={CROP_DATABASE[selectedCrop].seedsPerSowing} />
-            <InfoItem label="Yield per Bed" value={`${CROP_DATABASE[selectedCrop].yieldPerBed} ${CROP_DATABASE[selectedCrop].yieldUnit}`} />
-            <InfoItem label="Varieties" value={CROP_DATABASE[selectedCrop].varieties.join(", ")} />
-          </div>
-        </motion.div>
-      )}
-
-      {/* Schedule Output */}
-      {schedule && (
-        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} style={styles.scheduleSection}>
-          <h3>🗓️ Your Planting Schedule</h3>
-
-          <div style={styles.timeline}>
-            <TimelineEvent
-              icon="🌱" title="Tray Sowing" date={schedule.traySowDate}
-              description={`Start ${schedule.totalSeeds.toLocaleString()} seeds in trays`}
-              color="#7FB34D" moon={schedule.moon?.sow}
-            />
-            {schedule.transplantDate && (
-              <TimelineEvent
-                icon="🌿" title="Transplant" date={schedule.transplantDate}
-                description={`Move seedlings to ${schedule.numBeds} bed(s) - ${schedule.cropData.spacing}`}
-                color="#5A9F6E" moon={schedule.moon?.transplant}
-              />
-            )}
-            <TimelineEvent
-              icon="🌾" title="Harvest Begins" date={schedule.harvestStartDate}
-              description={`Start harvesting - ${schedule.yieldPerCycle} expected per cycle`}
-              color="#E6A93C" moon={schedule.moon?.harvest}
-            />
-            <TimelineEvent
-              icon="✅" title="Harvest Complete" date={schedule.harvestEndDate}
-              description="Cycle complete - clear beds and prepare for next planting"
-              color="#EFA8B8"
-            />
-            {schedule.bedTurnoverDate && (
-              <TimelineEvent
-                icon="🔄" title="Bed Ready for Replanting" date={schedule.bedTurnoverDate}
-                description="Stalebed period complete, ready for next succession"
-                color="#9B59B6"
-              />
-            )}
-          </div>
-
-          <div style={styles.successionInfo}>
-            <h4>🔄 Succession Planting Strategy</h4>
-            <p><strong>Total cycle:</strong> {schedule.totalCycleWeeks} weeks from sowing to bed turnover</p>
-            <p><strong>Possible cycles per year:</strong> {schedule.cyclesPerYear} cycles in a {growingSeasonWeeks}-week season</p>
-            <p><strong>Annual yield projection:</strong> {schedule.estimatedYield} across all cycles</p>
-            <p style={styles.tip}>
-              💡 <strong>Recommended:</strong> Plant a new succession every {schedule.successionInterval} weeks
-              for continuous harvest. This will require {schedule.totalSeedsForYear.toLocaleString()} seeds total for the year.
-            </p>
-          </div>
-
-          <div style={styles.actionItems}>
-            <h4>📝 Next Steps</h4>
-            <ul style={styles.actionList}>
-              <li>✅ Order {Math.ceil(schedule.totalSeeds * 1.2).toLocaleString()} seeds (includes 20% buffer for this cycle)</li>
-              <li>✅ Annual seed requirement: ~{Math.ceil(schedule.totalSeedsForYear * 1.2).toLocaleString()} seeds</li>
-              <li>✅ Prepare {schedule.numBeds} bed(s) with {schedule.cropData.spacing} spacing</li>
-              {schedule.cropData.mulch && <li>✅ Apply mulch to prepared beds</li>}
-              <li>✅ Set calendar reminder for {schedule.traySowDate}</li>
-              <li>✅ Set reminders for succession plantings every {schedule.successionInterval} weeks</li>
-            </ul>
-          </div>
-
-          <button
-            onClick={savePlan}
-            style={{ ...styles.saveButton, opacity: saving ? 0.7 : 1, cursor: saving ? "not-allowed" : "pointer" }}
-            disabled={saving}
-          >
-            {saving ? "Saving..." : "💾 Save to My Planner"}
-          </button>
-        </motion.div>
-      )}
+      </AnimatePresence>
     </div>
   );
 }
 
-function InfoItem({ label, value }) {
-  return (
-    <div style={styles.infoItem}>
-      <span style={styles.infoLabel}>{label}:</span>
-      <span style={styles.infoValue}>{value}</span>
-    </div>
-  );
-}
+// ── Active Crop Card ──────────────────────────────────────────────────────────
+function ActiveCropCard({ crop, index }) {
+  const db = CROP_DATABASE[crop.cropName];
+  const weeksToHarvest = db?.weeksToHarvest || 8;
+  const daysLeft = getDaysToHarvest(crop.sowDate, weeksToHarvest);
+  const progress = getProgressPercent(crop.sowDate, weeksToHarvest);
+  const emoji = db?.emoji || "🌱";
 
-function TimelineEvent({ icon, title, date, description, color, moon }) {
+  const harvestLabel = daysLeft === null
+    ? "No sow date recorded"
+    : daysLeft <= 0
+    ? "Ready to harvest!"
+    : daysLeft === 1
+    ? "1 day to harvest"
+    : `${daysLeft} days to harvest`;
+
+  const progressColor = daysLeft !== null && daysLeft <= 7
+    ? "#E6A93C"
+    : "var(--soil-green)";
+
   return (
-    <motion.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} style={styles.timelineEvent}>
-      <div style={{ ...styles.timelineIcon, backgroundColor: color }}>{icon}</div>
-      <div style={styles.timelineContent}>
-        <h4 style={styles.timelineTitle}>{title}</h4>
-        <p style={styles.timelineDate}>{date}</p>
-        <p style={styles.timelineDesc}>{description}</p>
-        {/* Moon phase badge — only renders when moon mode was on during generation */}
-        {moon && (
-          <div style={{ ...styles.moonBadge, borderColor: moon.color }}>
-            <span>{moon.emoji}</span>
-            <span style={{ color: moon.color, fontWeight: 600 }}>{moon.name}</span>
-            <span style={styles.moonBadgeTip}>{moon.tip}</span>
-          </div>
+    <motion.div
+      initial={{ opacity: 0, y: 16 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ delay: index * 0.06 }}
+      style={s.cropCard}
+    >
+      <div style={s.cropCardTop}>
+        <span style={s.cropEmoji}>{emoji}</span>
+        <div style={s.cropCardInfo}>
+          <div style={s.cropName}>{crop.cropName}</div>
+          {crop.numBeds && (
+            <div style={s.cropMeta}>{crop.numBeds} bed{crop.numBeds > 1 ? "s" : ""}</div>
+          )}
+        </div>
+        {daysLeft !== null && daysLeft <= 0 ? (
+          <span style={s.harvestBadge}>Harvest!</span>
+        ) : null}
+      </div>
+
+      {/* Progress bar */}
+      <div style={s.progressTrack}>
+        <motion.div
+          initial={{ width: 0 }}
+          animate={{ width: `${progress}%` }}
+          transition={{ duration: 0.8, ease: "easeOut" }}
+          style={{ ...s.progressFill, background: progressColor }}
+        />
+      </div>
+
+      <div style={s.cropCardBottom}>
+        <span style={{ ...s.harvestLabel, color: daysLeft !== null && daysLeft <= 7 ? "#E6A93C" : "#666" }}>
+          {harvestLabel}
+        </span>
+        {crop.estimatedYield && (
+          <span style={s.yieldLabel}>Est. {crop.estimatedYield}</span>
         )}
       </div>
     </motion.div>
   );
 }
 
-const styles = {
-  planner: {
+// ── Small helpers ─────────────────────────────────────────────────────────────
+function TimelineRow({ icon, label, date, color, moon }) {
+  return (
+    <div style={s.timelineRow}>
+      <div style={{ ...s.timelineDot, background: color }}>{icon}</div>
+      <div style={s.timelineRowContent}>
+        <span style={s.timelineLabel}>{label}</span>
+        <span style={s.timelineDate}>{date}</span>
+        {moon && (
+          <span style={{ ...s.moonTag, color: moon.color }}>
+            {moon.emoji} {moon.name}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function QuickStat({ label, value }) {
+  return (
+    <div style={s.quickStat}>
+      <div style={s.quickStatVal}>{value}</div>
+      <div style={s.quickStatLabel}>{label}</div>
+    </div>
+  );
+}
+
+function YieldStat({ label, value }) {
+  return (
+    <div style={s.yieldStat}>
+      <div style={s.yieldStatVal}>{value}</div>
+      <div style={s.yieldStatLabel}>{label}</div>
+    </div>
+  );
+}
+
+// ── Styles ────────────────────────────────────────────────────────────────────
+const s = {
+  root: { paddingTop: "0.5rem" },
+
+  // Section
+  section: { marginBottom: "2rem" },
+  sectionHeader: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "1rem" },
+  sectionTitle: { margin: 0, fontSize: "1.05rem", fontWeight: "700", color: "var(--ink-black)" },
+  addBtn: {
+    padding: "0.5rem 1rem", background: "var(--soil-green)", color: "white",
+    border: "none", borderRadius: "20px", fontSize: "0.9rem", fontWeight: "600",
+    cursor: "pointer", display: "flex", alignItems: "center", gap: "4px"
+  },
+
+  // Empty state
+  emptyCard: {
+    background: "white", borderRadius: "12px", border: "2px dashed #d1d5db",
+    padding: "2.5rem", textAlign: "center"
+  },
+  emptyIcon: { fontSize: "2.5rem" },
+  emptyText: { fontWeight: "600", color: "var(--ink-black)", margin: "0.75rem 0 0.25rem" },
+  emptySubtext: { color: "#999", fontSize: "0.9rem", margin: 0 },
+  emptyState: { color: "#999", fontSize: "0.9rem", padding: "1rem 0" },
+
+  // Crop grid
+  cropGrid: {
     display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))",
-    gap: "1.5rem",
-    marginTop: "2rem"
+    gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))",
+    gap: "1rem"
   },
-  inputSection: {
-    background: "white",
-    padding: "1.5rem",
-    borderRadius: "12px",
-    boxShadow: "0 2px 4px rgba(0,0,0,0.1)",
-    height: "fit-content"
+
+  // Crop card
+  cropCard: {
+    background: "white", borderRadius: "12px",
+    boxShadow: "0 2px 8px rgba(0,0,0,0.07)",
+    padding: "1.25rem", display: "flex", flexDirection: "column", gap: "0.75rem"
   },
-  // ── Moon toggle ────────────────────────────────────────────────────────────
-  cardHeader: {
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "space-between",
-    marginBottom: "0.25rem"
+  cropCardTop: { display: "flex", alignItems: "center", gap: "0.75rem" },
+  cropEmoji: { fontSize: "2rem", lineHeight: 1 },
+  cropCardInfo: { flex: 1 },
+  cropName: { fontWeight: "700", fontSize: "1rem", color: "var(--ink-black)" },
+  cropMeta: { fontSize: "0.8rem", color: "#999", marginTop: "2px" },
+  harvestBadge: {
+    background: "#E6A93C", color: "white", fontSize: "0.75rem",
+    fontWeight: "700", padding: "0.2rem 0.6rem", borderRadius: "20px"
   },
-  cardTitle: {
-    margin: 0,
-    fontSize: "1.15rem",
-    color: "var(--ink-black)"
+  progressTrack: { height: "6px", background: "#f0f0f0", borderRadius: "999px", overflow: "hidden" },
+  progressFill: { height: "100%", borderRadius: "999px" },
+  cropCardBottom: { display: "flex", justifyContent: "space-between", alignItems: "center" },
+  harvestLabel: { fontSize: "0.82rem", fontWeight: "500" },
+  yieldLabel: { fontSize: "0.78rem", color: "#999" },
+
+  // Overlay + Modal
+  overlay: {
+    position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)",
+    zIndex: 1000, display: "flex", alignItems: "flex-end",
+    justifyContent: "center", padding: "0"
   },
+  modal: {
+    background: "var(--paper-cream, #f9f6f0)", borderRadius: "20px 20px 0 0",
+    width: "100%", maxWidth: "600px", maxHeight: "90vh",
+    overflowY: "auto", padding: "1.75rem 1.5rem 2rem",
+    boxShadow: "0 -8px 40px rgba(0,0,0,0.18)"
+  },
+  modalHeader: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" },
+  modalTitle: { margin: 0, fontSize: "1.2rem", fontWeight: "700", color: "var(--ink-black)" },
+  closeBtn: {
+    background: "#eee", border: "none", borderRadius: "50%",
+    width: "32px", height: "32px", cursor: "pointer",
+    fontSize: "0.9rem", color: "#555", display: "flex",
+    alignItems: "center", justifyContent: "center", fontWeight: "bold"
+  },
+
+  // Moon
+  moonRow: { marginBottom: "0.75rem" },
   moonChip: {
-    display: "inline-flex",
-    alignItems: "center",
-    gap: "4px",
-    padding: "4px 10px",
-    fontSize: "0.8rem",
-    fontWeight: 600,
-    background: "#f0f0f0",
-    color: "#555",
-    border: "1px solid #ddd",
-    borderRadius: "20px",
-    cursor: "pointer",
-    transition: "all 0.2s",
-    whiteSpace: "nowrap"
+    padding: "5px 12px", fontSize: "0.82rem", fontWeight: 600,
+    background: "#f0f0f0", color: "#555", border: "1px solid #ddd",
+    borderRadius: "20px", cursor: "pointer"
   },
-  moonChipOn: {
-    background: "#1a1a2e",
-    color: "#e0d7ff",
-    border: "1px solid #4a3f7a"
-  },
+  moonChipOn: { background: "#1a1a2e", color: "#e0d7ff", border: "1px solid #4a3f7a" },
   moonHint: {
-    display: "flex",
-    alignItems: "flex-start",
-    gap: "10px",
-    background: "#fafafa",
-    borderRadius: "8px",
-    padding: "10px 12px",
-    marginBottom: "0.75rem",
-    marginTop: "0.5rem"
+    display: "flex", gap: "10px", background: "#fafafa",
+    borderRadius: "8px", padding: "10px 12px", marginBottom: "0.75rem"
   },
-  moonHintEmoji: { fontSize: "1.5rem", lineHeight: 1 },
-  moonHintText:  { margin: "2px 0 0", fontSize: "0.82rem", color: "#666" },
-  // ── Moon badge on timeline ─────────────────────────────────────────────────
-  moonBadge: {
-    display: "inline-flex",
-    alignItems: "center",
-    gap: "6px",
-    marginTop: "6px",
-    padding: "4px 10px",
-    background: "#fafafa",
-    border: "1px solid",
-    borderRadius: "20px",
-    fontSize: "0.8rem",
-    flexWrap: "wrap"
-  },
-  moonBadgeTip: { color: "#777", fontStyle: "italic" },
-  // ── Existing styles (unchanged) ────────────────────────────────────────────
-  label: {
-    display: "block", fontWeight: "600", marginTop: "1rem",
-    marginBottom: "0.5rem", color: "var(--ink-black)"
-  },
-  helpText: {
-    display: "block", fontSize: "0.85rem", fontWeight: "400",
-    color: "#666", marginTop: "0.25rem"
-  },
-  select: {
-    width: "100%", padding: "0.75rem", fontSize: "1rem",
-    border: "1px solid #ddd", borderRadius: "8px",
-    boxSizing: "border-box", transition: "border-color 0.2s"
-  },
+
+  // Form
+  formGroup: { marginBottom: "0.75rem" },
+  formRow: { display: "flex", gap: "0.75rem", marginBottom: "0.75rem" },
+  label: { display: "block", fontSize: "0.88rem", fontWeight: "600", color: "var(--ink-black)", marginBottom: "0.4rem" },
+  labelHint: { fontWeight: 400, color: "#999", fontSize: "0.82rem" },
   input: {
-    width: "100%", padding: "0.75rem", fontSize: "1rem",
-    border: "1px solid #ddd", borderRadius: "8px",
-    boxSizing: "border-box", transition: "border-color 0.2s"
+    width: "100%", padding: "0.7rem 0.75rem", fontSize: "0.95rem",
+    border: "1px solid #ddd", borderRadius: "8px", boxSizing: "border-box",
+    background: "white"
   },
-  error: { display: "block", color: "#ff4444", fontSize: "0.85rem", marginTop: "0.25rem" },
-  generateButton: {
-    width: "100%", marginTop: "1.5rem", padding: "1rem",
-    background: "var(--soil-green)", color: "white", border: "none",
-    borderRadius: "8px", fontSize: "1rem", fontWeight: "600",
-    cursor: "pointer", transition: "all 0.2s"
+  errorText: { display: "block", color: "#ef4444", fontSize: "0.8rem", marginTop: "0.25rem" },
+
+  // Quick info strip
+  quickInfo: {
+    display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(100px, 1fr))",
+    gap: "0.5rem", background: "#f0f9f4", borderRadius: "8px",
+    padding: "0.75rem", marginBottom: "0.75rem"
   },
-  infoCard: {
-    background: "white", padding: "1.5rem", borderRadius: "12px",
-    boxShadow: "0 2px 4px rgba(0,0,0,0.1)", height: "fit-content"
+  quickStat: { textAlign: "center" },
+  quickStatVal: { fontWeight: "700", fontSize: "0.92rem", color: "var(--soil-green)" },
+  quickStatLabel: { fontSize: "0.72rem", color: "#888", marginTop: "2px" },
+
+  generateBtn: {
+    width: "100%", padding: "0.85rem", background: "var(--soil-green)",
+    color: "white", border: "none", borderRadius: "10px",
+    fontSize: "1rem", fontWeight: "600", cursor: "pointer", marginBottom: "1rem"
   },
-  infoGrid: { display: "flex", flexDirection: "column", gap: "0.75rem", marginTop: "1rem" },
-  infoItem: {
-    display: "flex", justifyContent: "space-between",
-    padding: "0.75rem", background: "#f9f9f9", borderRadius: "6px"
+
+  // Schedule
+  scheduleBox: {
+    background: "white", borderRadius: "12px",
+    border: "1px solid #e5e7eb", padding: "1.25rem"
   },
-  infoLabel: { fontWeight: "500", color: "#666" },
-  infoValue: { fontWeight: "600", color: "var(--ink-black)", textAlign: "right" },
-  scheduleSection: {
-    gridColumn: "1 / -1", background: "white", padding: "2rem",
-    borderRadius: "12px", boxShadow: "0 2px 4px rgba(0,0,0,0.1)"
-  },
-  timeline: {
-    display: "flex", flexDirection: "column", gap: "1rem",
-    marginTop: "1.5rem", position: "relative", paddingLeft: "2rem"
-  },
-  timelineEvent: { display: "flex", gap: "1rem", position: "relative" },
-  timelineIcon: {
-    width: "50px", height: "50px", borderRadius: "50%",
+  scheduleTitle: { margin: "0 0 1rem", fontSize: "1rem", color: "var(--ink-black)" },
+  timelineList: { display: "flex", flexDirection: "column", gap: "0.6rem", marginBottom: "1rem" },
+  timelineRow: { display: "flex", alignItems: "flex-start", gap: "0.75rem" },
+  timelineDot: {
+    width: "32px", height: "32px", borderRadius: "50%",
     display: "flex", alignItems: "center", justifyContent: "center",
-    fontSize: "1.5rem", flexShrink: 0
+    fontSize: "1rem", flexShrink: 0
   },
-  timelineContent: { flex: 1, paddingBottom: "1rem", borderBottom: "1px solid #f0f0f0" },
-  timelineTitle: { fontSize: "1.1rem", marginBottom: "0.25rem", color: "var(--ink-black)" },
-  timelineDate: { fontSize: "0.9rem", color: "var(--soil-green)", fontWeight: "600", marginBottom: "0.5rem" },
-  timelineDesc: { fontSize: "0.9rem", color: "#666" },
-  successionInfo: {
-    background: "#F0F9F4", padding: "1.5rem", borderRadius: "8px",
-    marginTop: "2rem", border: "2px solid var(--soil-green)"
+  timelineRowContent: { display: "flex", flexWrap: "wrap", alignItems: "center", gap: "0.4rem", paddingTop: "5px" },
+  timelineLabel: { fontWeight: "600", fontSize: "0.88rem", color: "var(--ink-black)" },
+  timelineDate: { fontSize: "0.85rem", color: "var(--soil-green)", fontWeight: "600" },
+  moonTag: { fontSize: "0.75rem", fontStyle: "italic" },
+
+  yieldBox: {
+    display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(90px, 1fr))",
+    gap: "0.5rem", background: "#f0f9f4", borderRadius: "8px",
+    padding: "0.75rem", marginBottom: "0.75rem"
   },
-  tip: {
-    marginTop: "1rem", padding: "1rem", background: "white",
-    borderRadius: "6px", borderLeft: "4px solid var(--soil-green)"
+  yieldStat: { textAlign: "center" },
+  yieldStatVal: { fontWeight: "700", fontSize: "0.9rem", color: "var(--soil-green)" },
+  yieldStatLabel: { fontSize: "0.72rem", color: "#888", marginTop: "2px" },
+
+  seedNote: {
+    fontSize: "0.82rem", color: "#666", background: "#fffbeb",
+    borderRadius: "6px", padding: "0.6rem 0.75rem",
+    marginBottom: "0.75rem", lineHeight: 1.5
   },
-  actionItems: { marginTop: "2rem" },
-  actionList: { marginTop: "1rem", paddingLeft: "1.5rem", lineHeight: "2" },
-  saveButton: {
-    marginTop: "2rem", padding: "1rem 2rem", background: "var(--deep-leaf)",
-    color: "white", border: "none", borderRadius: "8px",
-    fontSize: "1rem", fontWeight: "600", cursor: "pointer", transition: "all 0.2s"
-  }
+
+  saveBtn: {
+    width: "100%", padding: "0.85rem", background: "var(--deep-leaf, #2d5a27)",
+    color: "white", border: "none", borderRadius: "10px",
+    fontSize: "1rem", fontWeight: "600", cursor: "pointer"
+  },
 };
