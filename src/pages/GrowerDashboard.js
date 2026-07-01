@@ -6,6 +6,7 @@ import {
 } from "firebase/firestore";
 import { onAuthStateChanged } from "firebase/auth";
 import { motion } from "framer-motion";
+import CropPlanner from "../components/CropPlanner";
 
 // ── Palette ───────────────────────────────────────────────────────────────────
 const C = {
@@ -132,32 +133,57 @@ function harvestLabel(days) {
 }
 
 // ── HOME ──────────────────────────────────────────────────────────────────────
-// Weather forecast is mocked — getWeather Cloud Function is a v1 callable
-// that the client hits via HTTPS. Until the v2 migration is done we show
-// static Nassau forecast. Weather alerts come from the activities collection.
+// Weather forecast comes from the live getWeather Cloud Function (v2 HTTPS,
+// Tomorrow.io-backed, 30-min server cache) — same endpoint WeatherWidget.jsx
+// already uses. No mock data.
 
-const FORECAST_MOCK = [
-  { label: "TODAY", icon: "🌥️", high: 84, low: 74, alert: "High RH" },
-  { label: "FRI",   icon: "🌥️", high: 80, low: 72, alert: "Rain"    },
-  { label: "SAT",   icon: "🌧️", high: 79, low: 71, alert: "Rain"    },
-  { label: "SUN",   icon: "⛅",  high: 82, low: 73, alert: "Humid"   },
-  { label: "MON",   icon: "☀️",  high: 86, low: 74                   },
-  { label: "TUE",   icon: "☀️",  high: 87, low: 75                   },
-  { label: "WED",   icon: "☀️",  high: 84, low: 73                   },
-];
+const WEATHER_FUNCTION_URL = "https://us-central1-soil-sista.cloudfunctions.net/getWeather";
+
+function useHomeWeather(island) {
+  const [weather, setWeather] = useState(null);
+  const [status,  setStatus]  = useState("loading"); // loading | ready | no_location | error
+
+  useEffect(() => {
+    if (!island) { setStatus("no_location"); return; }
+    let cancelled = false;
+    setStatus("loading");
+    (async () => {
+      try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 12000);
+        const res = await fetch(`${WEATHER_FUNCTION_URL}?island=${encodeURIComponent(island)}`, { signal: controller.signal });
+        clearTimeout(timeout);
+        if (!res.ok) throw new Error(`Weather service error ${res.status}`);
+        const data = await res.json();
+        if (!cancelled) { setWeather(data); setStatus("ready"); }
+      } catch (e) {
+        console.error("Home weather fetch error:", e);
+        if (!cancelled) setStatus("error");
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [island]);
+
+  return { weather, status };
+}
 
 const QA_BUTTONS = [
-  { icon: "🌱", label: "Add Planting", primary: true  },
-  { icon: "🌾", label: "Log Harvest",  primary: false },
-  { icon: "💰", label: "Log Sale",     primary: false },
-  { icon: "🧪", label: "Log Spray",    primary: false },
-  { icon: "👁️", label: "Observation",  primary: false },
-  { icon: "🌿", label: "Amendment",    primary: false },
-  { icon: "📦", label: "Restock",      primary: false },
-  { icon: "🩺", label: "Diagnose",     primary: false },
+  { id: "planting",    icon: "🌱", label: "Add Planting", primary: true  },
+  { id: "harvest",     icon: "🌾", label: "Log Harvest",  primary: false },
+  { id: "sale",        icon: "💰", label: "Log Sale",     primary: false },
+  { id: "spray",       icon: "🧪", label: "Log Spray",    primary: false },
+  { id: "observation", icon: "👁️", label: "Observation",  primary: false },
+  { id: "amendment",   icon: "🌿", label: "Amendment",    primary: false },
+  { id: "restock",     icon: "📦", label: "Restock",      primary: false },
+  { id: "diagnose",    icon: "🩺", label: "Diagnose",     primary: false },
 ];
 
-function HomeSection({ userData, activities }) {
+function HomeSection({ userData, activities, userId, setSection, bumpAddPlanting, openLogModal }) {
+  const island = typeof userData?.location === "string"
+    ? userData.location
+    : userData?.location?.island || null;
+  const { weather, status: wxStatus } = useHomeWeather(island);
+
   // ── Derive beds from crop_plan activities ─────────────────────────────────
   const beds = activities
     .filter(a => a.type === "crop_plan" && a.status === "planned")
@@ -213,17 +239,34 @@ function HomeSection({ userData, activities }) {
           </div>
         </div>
         <div style={{ display: "flex", gap: 8, overflowX: "auto" }}>
-          {FORECAST_MOCK.map((d, i) => (
+          {wxStatus === "loading" && (
+            <div style={{ padding: "0.9rem", color: C.textMuted, fontSize: "0.85rem" }}>Loading forecast…</div>
+          )}
+          {wxStatus === "no_location" && (
+            <div style={{ padding: "0.9rem", color: C.textMuted, fontSize: "0.85rem" }}>
+              No location set. <a href="/profile" style={{ color: C.green, fontWeight: 600 }}>Add your island</a> to see forecast.
+            </div>
+          )}
+          {wxStatus === "error" && (
+            <div style={{ padding: "0.9rem", color: C.red, fontSize: "0.85rem" }}>Weather temporarily unavailable.</div>
+          )}
+          {wxStatus === "ready" && weather && [{ isCurrent: true, day: "TODAY", emoji: weather.current.emoji, high: weather.current.temp, low: weather.current.temp, rain: weather.current.rainfall }, ...weather.forecast.slice(1)].map((d, i) => (
             <div key={i} style={{ ...fDay, ...(i === 0 ? fDayOn : {}) }}>
-              <div style={{ fontSize: "0.7rem", fontWeight: 700, color: i === 0 ? "#fff" : C.textMuted }}>{d.label}</div>
-              <div style={{ fontSize: "1.4rem", margin: "0.25rem 0" }}>{d.icon}</div>
+              <div style={{ fontSize: "0.7rem", fontWeight: 700, color: i === 0 ? "#fff" : C.textMuted }}>{d.isCurrent ? "TODAY" : d.day?.toUpperCase()}</div>
+              <div style={{ fontSize: "1.4rem", margin: "0.25rem 0" }}>{d.emoji}</div>
               <div style={{ fontWeight: 800, color: i === 0 ? "#fff" : C.text }}>{d.high}°</div>
-              <div style={{ fontSize: "0.7rem", color: i === 0 ? "rgba(255,255,255,0.7)" : C.textMuted }}>{d.low}° to</div>
-              {d.alert && <div style={{ fontSize: "0.62rem", color: i === 0 ? "#FFD700" : C.orange, fontWeight: 700, marginTop: 3 }}>{d.alert}</div>}
+              <div style={{ fontSize: "0.7rem", color: i === 0 ? "rgba(255,255,255,0.7)" : C.textMuted }}>{d.low}° lo</div>
+              {d.rain > 5 && <div style={{ fontSize: "0.62rem", color: i === 0 ? "#FFD700" : C.orange, fontWeight: 700, marginTop: 3 }}>Rain</div>}
             </div>
           ))}
         </div>
       </Card>
+
+      {weather?.stale && (
+        <div style={{ background: C.orangeLight, border: "1px solid #FCD34D", borderRadius: 8, padding: "0.5rem 0.9rem", marginBottom: "1.1rem", fontSize: "0.8rem", color: "#92400E" }}>
+          ⚠️ Showing cached weather — live data temporarily unavailable.
+        </div>
+      )}
 
       {/* Pressure cards */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: "1rem", marginBottom: "1.1rem" }}>
@@ -279,7 +322,15 @@ function HomeSection({ userData, activities }) {
         <h3 style={{ margin: "0 0 0.9rem", fontSize: "0.95rem" }}>⚡ Quick Actions</h3>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: "0.65rem" }}>
           {QA_BUTTONS.map((q, i) => (
-            <button key={i} style={{ ...qaBtn, ...(q.primary ? qaBtnPrimary : {}) }}>
+            <button
+              key={i}
+              style={{ ...qaBtn, ...(q.primary ? qaBtnPrimary : {}) }}
+              onClick={() => {
+                if (q.id === "planting") { setSection("farm"); bumpAddPlanting(); }
+                else if (q.id === "diagnose") { setSection("doctor"); }
+                else { openLogModal(q.id); }
+              }}
+            >
               <span style={{ fontSize: "1rem" }}>{q.icon}</span>
               <span style={{ fontSize: "0.76rem", fontWeight: 500 }}>{q.label}</span>
             </button>
@@ -338,7 +389,7 @@ function HomeSection({ userData, activities }) {
       <Card>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.9rem" }}>
           <h3 style={{ margin: 0, fontSize: "0.95rem" }}>📊 Recent Activity</h3>
-          <button style={linkBtn}>Full History →</button>
+          <button style={linkBtn} onClick={() => setSection("history")}>Full History →</button>
         </div>
         {recentAct.length > 0 ? recentAct.map((a, i) => (
           <div key={a.id} style={{ display: "flex", gap: "0.7rem", alignItems: "center", padding: "0.55rem 0", borderBottom: i < recentAct.length - 1 ? `1px solid ${C.border}` : "none" }}>
@@ -369,11 +420,211 @@ const qaBtn       = { display: "flex", flexDirection: "column", alignItems: "cen
 const qaBtnPrimary = { background: C.green, color: "#fff", border: "none" };
 const linkBtn     = { background: "none", border: "none", color: C.green, fontSize: "0.82rem", cursor: "pointer", fontWeight: 600 };
 
+// ── LOG ACTIVITY MODAL ──────────────────────────────────────────────────────
+// Real Firestore writer shared by Log Harvest / Log Sale / Log Spray /
+// Observation / Amendment / Restock quick actions. Writes to `activities`
+// with the exact type keys HistorySection.TYPE_TO_FILTER already expects.
+
+const LOG_TYPES = {
+  harvest: {
+    title: "Log Harvest", icon: "🌾",
+    fields: [
+      { key: "crop",     label: "Crop",           type: "text",   required: true, placeholder: "e.g. Bok Choy" },
+      { key: "bedLabel", label: "Bed",             type: "text",   placeholder: "e.g. Beds 1 & 2" },
+      { key: "quantity", label: "Quantity",        type: "number", required: true, placeholder: "48" },
+      { key: "unit",     label: "Unit",            type: "select", options: ["lbs", "oz", "units", "bunches"] },
+      { key: "quality",  label: "Quality",         type: "select", options: ["Excellent", "Good", "Fair", "Poor"] },
+      { key: "notes",    label: "Notes",           type: "textarea" },
+    ],
+    build: (d) => ({
+      title:   `Harvest · ${d.crop || "Crop"}`,
+      message: `${d.quantity || "—"} ${d.unit || ""} · ${d.bedLabel || "unspecified bed"}${d.quality ? ` · ${d.quality}` : ""}`,
+    }),
+  },
+  sale: {
+    title: "Log Sale", icon: "💰",
+    fields: [
+      { key: "produce",      label: "Produce",        type: "text",   required: true, placeholder: "e.g. Tomato Cherry" },
+      { key: "buyer",        label: "Buyer",          type: "text",   placeholder: "e.g. South Beach Market" },
+      { key: "quantity",     label: "Quantity",       type: "number", required: true },
+      { key: "unit",         label: "Unit",           type: "select", options: ["lbs", "units", "bunches"] },
+      { key: "pricePerUnit", label: "Price per unit", type: "number", required: true, placeholder: "6.50" },
+      { key: "saleType",     label: "Sale type",      type: "select", options: ["Retail", "Wholesale"] },
+      { key: "notes",        label: "Notes",          type: "textarea" },
+    ],
+    build: (d) => {
+      const amount = (Number(d.quantity) || 0) * (Number(d.pricePerUnit) || 0);
+      return {
+        title:   `Sale · ${d.produce || "Produce"}`,
+        message: `$${amount.toFixed(2)} · ${d.quantity || "—"} ${d.unit || ""} to ${d.buyer || "buyer"}`,
+        extra:   { amount },
+      };
+    },
+  },
+  spray: {
+    title: "Log Spray", icon: "🧪",
+    fields: [
+      { key: "product",      label: "Product",       type: "text",   required: true, placeholder: "e.g. Neem Oil 1%" },
+      { key: "beds",         label: "Beds",           type: "text",   placeholder: "e.g. All beds" },
+      { key: "reentryDays",  label: "Re-entry (days)",type: "number", placeholder: "7" },
+      { key: "notes",        label: "Notes",          type: "textarea" },
+    ],
+    build: (d) => ({
+      title:   `Spray · ${d.product || "Product"}`,
+      message: `${d.beds || "unspecified beds"}${d.reentryDays ? ` · Re-entry ${d.reentryDays}d` : ""}`,
+    }),
+  },
+  observation: {
+    title: "Log Observation", icon: "👁️",
+    fields: [
+      { key: "bedLabel",    label: "Bed",         type: "text",   placeholder: "e.g. Bed 3" },
+      { key: "observation", label: "What did you see?", type: "textarea", required: true },
+      { key: "flag",        label: "Flag",        type: "select", options: ["None", "Monitor", "Urgent"] },
+    ],
+    build: (d) => ({
+      title:   `Observation · ${d.bedLabel || "Farm"}`,
+      message: d.observation || "",
+    }),
+  },
+  amendment: {
+    title: "Log Amendment", icon: "🌿",
+    fields: [
+      { key: "product", label: "Product",  type: "text", required: true, placeholder: "e.g. Compost" },
+      { key: "amount",  label: "Amount",   type: "text", placeholder: "e.g. 20 lbs" },
+      { key: "beds",    label: "Beds",     type: "text", placeholder: "e.g. Beds 1 & 3" },
+      { key: "notes",   label: "Notes",    type: "textarea" },
+    ],
+    build: (d) => ({
+      title:   `Amendment · ${d.product || "Product"}`,
+      message: `${d.amount || "—"} · ${d.beds || "unspecified beds"}`,
+    }),
+  },
+  restock: {
+    title: "Log Restock", icon: "📦",
+    fields: [
+      { key: "item",     label: "Item",     type: "text",   required: true, placeholder: "e.g. Bok Choy Seedlings" },
+      { key: "quantity", label: "Quantity", type: "number", required: true },
+      { key: "unit",     label: "Unit",     type: "text",   placeholder: "e.g. units" },
+      { key: "cost",     label: "Cost",     type: "number", placeholder: "40.00" },
+      { key: "supplier", label: "Supplier", type: "text",   placeholder: "e.g. South Beach Nursery" },
+    ],
+    build: (d) => ({
+      title:   `Restock · ${d.item || "Item"}`,
+      message: `${d.quantity || "—"} ${d.unit || ""}${d.cost ? ` · $${Number(d.cost).toFixed(2)}` : ""}${d.supplier ? ` · ${d.supplier}` : ""}`,
+    }),
+  },
+};
+
+function LogActivityModal({ type, userId, onClose, onSaved }) {
+  const cfg = LOG_TYPES[type];
+  const [data, setData] = useState({});
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState(null);
+
+  if (!cfg) return null;
+
+  const set = (key, val) => setData(prev => ({ ...prev, [key]: val }));
+
+  const save = async () => {
+    const missing = cfg.fields.filter(f => f.required && !data[f.key]);
+    if (missing.length > 0) { setError(`${missing[0].label} is required.`); return; }
+    if (!userId) { setError("Not signed in."); return; }
+    setSaving(true);
+    setError(null);
+    try {
+      const built = cfg.build(data);
+      await addDoc(collection(db, "activities"), {
+        userId,
+        type,
+        category: "farming",
+        title:   built.title,
+        message: built.message,
+        icon:    cfg.icon,
+        status:  "logged",
+        data:    { ...data, ...(built.extra || {}), loggedAt: new Date().toISOString() },
+        createdAt: serverTimestamp(),
+        expiresAt: null,
+      });
+      onSaved();
+    } catch (e) {
+      console.error(`Failed to save ${type}:`, e);
+      setError("Failed to save. Please try again.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div style={overlay} onClick={onClose}>
+      <motion.div
+        initial={{ opacity: 0, scale: 0.96, y: 16 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        style={mBox}
+        onClick={e => e.stopPropagation()}
+      >
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1.1rem" }}>
+          <h3 style={{ margin: 0, fontSize: "1rem" }}>{cfg.icon} {cfg.title}</h3>
+          <button onClick={onClose} style={xBtn}>✕</button>
+        </div>
+
+        <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
+          {cfg.fields.map(f => (
+            <div key={f.key}>
+              <label style={{ display: "block", fontSize: "0.76rem", fontWeight: 600, color: C.textMuted, marginBottom: "0.3rem" }}>
+                {f.label}{f.required ? " *" : ""}
+              </label>
+              {f.type === "select" ? (
+                <select
+                  value={data[f.key] || ""}
+                  onChange={e => set(f.key, e.target.value)}
+                  style={inputStyle}
+                >
+                  <option value="">Select…</option>
+                  {f.options.map(o => <option key={o} value={o}>{o}</option>)}
+                </select>
+              ) : f.type === "textarea" ? (
+                <textarea
+                  value={data[f.key] || ""}
+                  onChange={e => set(f.key, e.target.value)}
+                  placeholder={f.placeholder}
+                  rows={3}
+                  style={{ ...inputStyle, resize: "vertical" }}
+                />
+              ) : (
+                <input
+                  type={f.type}
+                  value={data[f.key] || ""}
+                  onChange={e => set(f.key, e.target.value)}
+                  placeholder={f.placeholder}
+                  style={inputStyle}
+                />
+              )}
+            </div>
+          ))}
+        </div>
+
+        {error && <div style={{ color: C.red, fontSize: "0.8rem", marginTop: "0.7rem" }}>{error}</div>}
+
+        <button
+          onClick={save}
+          disabled={saving}
+          style={{ ...flowOptFull, marginTop: "1.1rem", background: C.green, color: "#fff", fontWeight: 700, border: "none", opacity: saving ? 0.7 : 1 }}
+        >
+          {saving ? "Saving…" : `Save ${cfg.title}`}
+        </button>
+      </motion.div>
+    </div>
+  );
+}
+
+const inputStyle = { width: "100%", padding: "0.55rem 0.7rem", border: `1px solid ${C.border}`, borderRadius: 8, fontSize: "0.86rem", fontFamily: "inherit", color: C.text };
+const flowOptFull = { width: "100%", padding: "0.7rem 0.9rem", borderRadius: 8, cursor: "pointer", textAlign: "center", fontSize: "0.85rem" };
+
 // ── FARM ──────────────────────────────────────────────────────────────────────
 // Beds are derived from activities where type === "crop_plan" && status === "planned"
 // Seedling nursery and season rotation are derived from the same source.
 
-function FarmSection({ userData, activities }) {
+function FarmSection({ userData, activities, userId, addPlantingSignal, bumpAddPlanting }) {
   const island = typeof userData?.location === "string"
     ? userData.location
     : userData?.location?.island || "—";
@@ -386,14 +637,14 @@ function FarmSection({ userData, activities }) {
       return {
         id:          a.id,
         crop:        d.variant ? `${d.cropName} (${d.variant})` : (d.cropName || "Crop"),
-        beds:        d.bedsCount ? `${d.bedsCount} bed${d.bedsCount > 1 ? "s" : ""}` : "1 bed",
-        plants:      d.plantsCount || "—",
+        beds:        d.numBeds ? `${d.numBeds} bed${d.numBeds > 1 ? "s" : ""}` : "1 bed",
+        plants:      d.seedsNeeded || "—",
         transplanted: d.transplantDate
           ? (d.transplantDate?.toDate ? d.transplantDate.toDate() : new Date(d.transplantDate))
               .toLocaleDateString("en-US", { month: "short", day: "numeric" })
           : "—",
-        rowSpacing:  d.rowSpacing   || "—",
-        plantSpacing:d.plantSpacing || "—",
+        rowSpacing:  "—",
+        plantSpacing: typeof d.spacing === "string" ? d.spacing : "—",
         days,
         label:       harvestLabel(days),
         est:         d.estimatedYield || null,
@@ -412,34 +663,15 @@ function FarmSection({ userData, activities }) {
             {island} · {beds.length} active bed{beds.length !== 1 ? "s" : ""} · {userData?.farmSize || "—"}
           </p>
         </div>
-        <button style={{ background: C.green, color: "#fff", border: "none", borderRadius: 8, padding: "0.6rem 1.1rem", fontWeight: 600, cursor: "pointer", fontSize: "0.88rem" }}>
-          + Add Planting
-        </button>
       </div>
 
-      <Card style={{ marginBottom: "1.1rem" }}>
-        <h3 style={{ margin: "0 0 1rem", fontSize: "0.95rem" }}>🌿 Active Beds</h3>
-        {beds.length > 0 ? beds.map((b, i) => (
-          <div key={b.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "0.8rem 0", borderBottom: i < beds.length - 1 ? `1px solid ${C.border}` : "none" }}>
-            <div style={{ flex: 1 }}>
-              <div style={{ fontWeight: 700, fontSize: "0.92rem" }}>{b.crop}</div>
-              <div style={{ fontSize: "0.75rem", color: C.textMuted, marginTop: 3 }}>
-                {b.beds} · {b.plants} plants · Transplanted {b.transplanted}
-                {b.rowSpacing !== "—" ? ` · Row: ${b.rowSpacing}` : ""}
-                {b.plantSpacing !== "—" ? ` · Plant: ${b.plantSpacing}` : ""}
-              </div>
-            </div>
-            <div style={{ textAlign: "right", marginLeft: "1rem" }}>
-              {b.label && <Pill color={b.days <= 7 ? C.red : b.days <= 21 ? C.orange : C.greenBadge}>{b.label}</Pill>}
-              {b.est && <div style={{ fontSize: "0.74rem", color: C.textMuted, marginTop: 4 }}>{b.est}</div>}
-            </div>
-          </div>
-        )) : (
-          <p style={{ color: C.textMuted, fontSize: "0.85rem", textAlign: "center", padding: "1.5rem 0" }}>
-            No active plantings. Tap <strong>+ Add Planting</strong> to log your first bed.
-          </p>
-        )}
-      </Card>
+      {/* Real Add Planting flow — full crop database, moon-phase planning,
+          writes real crop_plan activities to Firestore. Triggered here via
+          its own "+ Add a crop" button, or externally from Home's Quick
+          Action via addPlantingSignal. */}
+      <div style={{ marginBottom: "1.1rem" }}>
+        <CropPlanner userData={{ ...userData, userId }} autoOpenSignal={addPlantingSignal} />
+      </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1.1rem" }}>
         {/* Seedling nursery */}
@@ -500,27 +732,40 @@ function FarmSection({ userData, activities }) {
 }
 
 // ── MARKET ────────────────────────────────────────────────────────────────────
-// No market collection in Firestore yet. Market prices are static reference data.
-// "Your price" would come from activities where type === "sale" → data.pricePerUnit.
-// We derive it from the most recent sale per produce type.
+// Reference prices come from the `market_prices` Firestore collection
+// (admin-editable — see firestore.rules). "Your price" is derived from the
+// user's own real sale activities → data.pricePerUnit. Nothing hardcoded here.
 
-const MARKET_REF = [
-  { produce: "Tomato Cherry",     unit: "per lb",    market: 7.50, key: "tomato"      },
-  { produce: "Bok Choy",          unit: "per lb",    market: 2.00, key: "bok choy"    },
-  { produce: "Cucumber English",  unit: "per unit",  market: 3.50, key: "cucumber"    },
-  { produce: "Bell Pepper",       unit: "per lb",    market: 5.00, key: "pepper"      },
-  { produce: "Callaloo",          unit: "per bunch", market: 2.50, key: "callaloo"    },
-  { produce: "Scallion",          unit: "per bunch", market: 1.50, key: "scallion"    },
-  { produce: "Sweet Potato",      unit: "per lb",    market: 1.80, key: "sweet potato"},
-  { produce: "Okra",              unit: "per lb",    market: 4.00, key: "okra"        },
-  { produce: "Pumpkin",           unit: "per lb",    market: 1.20, key: "pumpkin"     },
-  { produce: "Kale",              unit: "per lb",    market: 3.50, key: "kale"        },
-];
+function useMarketPrices() {
+  const [prices,  setPrices]  = useState([]);
+  const [status,  setStatus]  = useState("loading"); // loading | ready | empty | error
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const snap = await getDocs(collection(db, "market_prices"));
+        if (cancelled) return;
+        const rows = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        setPrices(rows);
+        setStatus(rows.length > 0 ? "ready" : "empty");
+      } catch (e) {
+        console.error("market_prices fetch error:", e);
+        if (!cancelled) setStatus("error");
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  return { prices, status };
+}
 
 function MarketSection({ userData, activities }) {
   const island = typeof userData?.location === "string"
     ? userData.location
     : userData?.location?.island || "Nassau";
+
+  const { prices: marketRef, status: mktStatus } = useMarketPrices();
 
   // Derive user prices from most recent sale activities per produce
   const priceMap = {};
@@ -541,6 +786,20 @@ function MarketSection({ userData, activities }) {
             📤 Upload Receipt
           </button>
         </div>
+
+        {mktStatus === "loading" && (
+          <p style={{ color: C.textMuted, fontSize: "0.85rem", padding: "1rem 0" }}>Loading market prices…</p>
+        )}
+        {mktStatus === "error" && (
+          <p style={{ color: C.red, fontSize: "0.85rem", padding: "1rem 0" }}>Couldn't load market prices. Try again shortly.</p>
+        )}
+        {mktStatus === "empty" && (
+          <p style={{ color: C.textMuted, fontSize: "0.85rem", padding: "1rem 0" }}>
+            No reference prices set up yet for {island}. Ask an admin to seed the <code>market_prices</code> collection.
+          </p>
+        )}
+
+        {mktStatus === "ready" && (
         <table style={{ width: "100%", borderCollapse: "collapse" }}>
           <thead>
             <tr style={{ borderBottom: `2px solid ${C.border}` }}>
@@ -550,7 +809,7 @@ function MarketSection({ userData, activities }) {
             </tr>
           </thead>
           <tbody>
-            {MARKET_REF.map((r, i) => {
+            {marketRef.map((r, i) => {
               const yours = priceMap[r.key] ?? null;
               const diff  = yours != null ? +(yours - r.market).toFixed(2) : null;
               return (
@@ -560,7 +819,7 @@ function MarketSection({ userData, activities }) {
                     <div style={{ fontSize: "0.73rem", color: C.textMuted }}>{r.unit}</div>
                   </td>
                   <td style={{ ...tD, textAlign: "right", fontWeight: 700, color: C.green }}>
-                    ${r.market.toFixed(2)}
+                    ${Number(r.market).toFixed(2)}
                   </td>
                   <td style={{ ...tD, textAlign: "right" }}>
                     {yours != null ? (
@@ -579,6 +838,7 @@ function MarketSection({ userData, activities }) {
             })}
           </tbody>
         </table>
+        )}
       </Card>
     </div>
   );
@@ -590,55 +850,161 @@ const tD = { padding: "0.7rem 0", verticalAlign: "top" };
 // ── CROP DOCTOR ───────────────────────────────────────────────────────────────
 // Diagnoses are saved to Firestore as activities with type === "diagnosis"
 // so they feed into History and trigger onActivityCreate.
+//
+// FIX: previously "Disease / Fungal", "Nutrient Deficiency" and "Not sure"
+// all silently ran the pest-only question tree (PEST_STEPS/DX_RESULTS) and
+// the modal was always titled "Pest Diagnosis" regardless of what was
+// clicked. Each entry now has its own real tree, and "guided" asks a
+// category question first, then routes into the matching tree.
 
-const PEST_STEPS = [
-  { q: "Can you see insects, or is it damage only?",
-    opts: ["I can see insects moving", "Damage only – no insects visible", "Both insects and damage"] },
-  { q: "Where are the insects located?",
-    opts: ["Clustered on stems and new growth", "Under the leaves", "Flying around when disturbed", "On the soil surface near the base"] },
-  { q: "What do they look like?",
-    opts: [
-      "Tiny soft-bodied clusters, green black or white – Aphids",
-      "Tiny white moth-like insects – Whitefly",
-      "Very small fast-moving, silver streaks on leaves – Thrips",
-      "Small brown bumps, waxy or cottony coating – Scale",
-    ]},
-];
+const DX_TREES = {
+  pest: {
+    label: "Pest Diagnosis",
+    steps: [
+      { q: "Can you see insects, or is it damage only?",
+        opts: ["I can see insects moving", "Damage only – no insects visible", "Both insects and damage"] },
+      { q: "Where are the insects located?",
+        opts: ["Clustered on stems and new growth", "Under the leaves", "Flying around when disturbed", "On the soil surface near the base"] },
+      { q: "What do they look like?",
+        opts: [
+          "Tiny soft-bodied clusters, green black or white – Aphids",
+          "Tiny white moth-like insects – Whitefly",
+          "Very small fast-moving, silver streaks on leaves – Thrips",
+          "Small brown bumps, waxy or cottony coating – Scale",
+        ]},
+    ],
+    results: {
+      "Tiny soft-bodied clusters, green black or white – Aphids": {
+        pest: "Aphids",
+        desc: "Soft-bodied sap-sucking insects. Common when humidity is high and temperatures are warm. Often spread by ants who farm them for honeydew. Left untreated they cause stunted growth, curling leaves, and can transmit plant viruses.",
+        treat: "Neem Oil 1% spray – apply to undersides of leaves at dusk. Repeat every 5 days for 3 cycles. Remove heavily infested leaves. Wash off with strong water stream first to reduce numbers before spraying.",
+        organic: true, reentry: "7 days",
+      },
+      "Tiny white moth-like insects – Whitefly": {
+        pest: "Whitefly",
+        desc: "Small white flying insects found under leaves. Cause yellowing and honeydew secretion. Thrive in warm, humid Caribbean conditions.",
+        treat: "Yellow sticky traps immediately. Neem Oil 1% spray every 4 days. Introduce reflective mulch. Prune heavily infested stems.",
+        organic: true, reentry: "5 days",
+      },
+      "Very small fast-moving, silver streaks on leaves – Thrips": {
+        pest: "Thrips",
+        desc: "Tiny, fast-moving insects that scrape and feed on leaf tissue. Leave silver streaking and black fecal deposits. Can spread viral diseases.",
+        treat: "Spinosad-based spray or Neem Oil 1%. Blue sticky traps for monitoring. Remove affected leaves. Apply every 5 days for 2–3 cycles.",
+        organic: true, reentry: "7 days",
+      },
+      "Small brown bumps, waxy or cottony coating – Scale": {
+        pest: "Scale",
+        desc: "Immobile armored pests that feed by sucking plant sap. Produce honeydew that leads to sooty mold.",
+        treat: "Rubbing alcohol swab on individual scales. Horticultural oil spray. Prune heavily infested branches.",
+        organic: true, reentry: "3 days",
+      },
+    },
+    fallback: { pest: "Unidentified pest", desc: "Based on your answers, further inspection is recommended.", treat: "Monitor closely. Avoid applying anything until pest is confirmed.", organic: false, reentry: "N/A" },
+  },
 
-const DX_RESULTS = {
-  "Tiny soft-bodied clusters, green black or white – Aphids": {
-    pest: "Aphids",
-    desc: "Soft-bodied sap-sucking insects. Common when humidity is high and temperatures are warm. Often spread by ants who farm them for honeydew. Left untreated they cause stunted growth, curling leaves, and can transmit plant viruses.",
-    treat: "Neem Oil 1% spray – apply to undersides of leaves at dusk. Repeat every 5 days for 3 cycles. Remove heavily infested leaves. Wash off with strong water stream first to reduce numbers before spraying.",
-    organic: true, reentry: "7 days",
+  disease: {
+    label: "Disease Diagnosis",
+    steps: [
+      { q: "Where on the plant are you seeing symptoms?",
+        opts: ["Leaves — spots or lesions", "Leaves — powdery or fuzzy coating", "Stems or base of plant", "Fruit"] },
+      { q: "What do the spots or affected areas look like?",
+        opts: [
+          "White or grey powdery coating on leaf surface – Powdery Mildew",
+          "Yellow patches on top, fuzzy grey-purple underneath – Downy Mildew",
+          "Dark water-soaked spots that spread quickly – Bacterial/Blight",
+          "Sunken dark spots on fruit or stems – Anthracnose",
+        ]},
+    ],
+    results: {
+      "White or grey powdery coating on leaf surface – Powdery Mildew": {
+        pest: "Powdery Mildew",
+        desc: "Fungal disease favoured by high humidity with poor airflow. Coats leaves in a white-grey powder, weakening the plant and reducing yield if untreated.",
+        treat: "Remove and destroy affected leaves. Improve airflow by pruning. Apply Copper Fungicide or a baking-soda spray (1 tbsp/gallon) every 5–7 days.",
+        organic: true, reentry: "5 days",
+      },
+      "Yellow patches on top, fuzzy grey-purple underneath – Downy Mildew": {
+        pest: "Downy Mildew",
+        desc: "Thrives in cool, wet, humid conditions. Spreads fast on leafy greens and cucurbits, especially after rain.",
+        treat: "Avoid overhead watering — switch to drip. Remove infected leaves immediately. Apply Copper Fungicide before rain events. Improve spacing for airflow.",
+        organic: true, reentry: "7 days",
+      },
+      "Dark water-soaked spots that spread quickly – Bacterial/Blight": {
+        pest: "Bacterial Blight",
+        desc: "Bacterial infection that spreads via water splash and contaminated tools. Water-soaked lesions can expand rapidly in warm, wet weather.",
+        treat: "Remove infected plants/leaves and destroy — do not compost. Sanitize tools between plants. Apply Copper Fungicide as a protectant. Avoid working plants when wet.",
+        organic: true, reentry: "7 days",
+      },
+      "Sunken dark spots on fruit or stems – Anthracnose": {
+        pest: "Anthracnose",
+        desc: "Fungal disease causing sunken, dark lesions on fruit and stems. Spreads in warm, humid conditions, often via splashing water.",
+        treat: "Remove and destroy affected fruit. Apply Copper Fungicide on a 7-day rotation. Mulch to reduce soil splash onto lower leaves and fruit.",
+        organic: true, reentry: "5 days",
+      },
+    },
+    fallback: { pest: "Unidentified disease", desc: "Symptoms don't clearly match a common pattern — a soil or leaf sample may help confirm.", treat: "Isolate affected plants where possible, avoid overhead watering, and monitor for spread over 2–3 days.", organic: false, reentry: "N/A" },
   },
-  "Tiny white moth-like insects – Whitefly": {
-    pest: "Whitefly",
-    desc: "Small white flying insects found under leaves. Cause yellowing and honeydew secretion. Thrive in warm, humid Caribbean conditions.",
-    treat: "Yellow sticky traps immediately. Neem Oil 1% spray every 4 days. Introduce reflective mulch. Prune heavily infested stems.",
-    organic: true, reentry: "5 days",
-  },
-  "Very small fast-moving, silver streaks on leaves – Thrips": {
-    pest: "Thrips",
-    desc: "Tiny, fast-moving insects that scrape and feed on leaf tissue. Leave silver streaking and black fecal deposits. Can spread viral diseases.",
-    treat: "Spinosad-based spray or Neem Oil 1%. Blue sticky traps for monitoring. Remove affected leaves. Apply every 5 days for 2–3 cycles.",
-    organic: true, reentry: "7 days",
-  },
-  "Small brown bumps, waxy or cottony coating – Scale": {
-    pest: "Scale",
-    desc: "Immobile armored pests that feed by sucking plant sap. Produce honeydew that leads to sooty mold.",
-    treat: "Rubbing alcohol swab on individual scales. Horticultural oil spray. Prune heavily infested branches.",
-    organic: true, reentry: "3 days",
+
+  nutrient: {
+    label: "Nutrient Deficiency Diagnosis",
+    steps: [
+      { q: "Where does the yellowing or discoloration start?",
+        opts: ["Older, lower leaves first", "Newer, top growth first", "Between leaf veins, veins stay green", "Whole plant looks pale/stunted"] },
+      { q: "Any other symptoms?",
+        opts: [
+          "Lower leaves yellow, plant looks generally pale – Nitrogen deficiency",
+          "Purple or reddish tint on stems/undersides – Phosphorus deficiency",
+          "Yellow/brown leaf edges (scorch) on older leaves – Potassium deficiency",
+          "New growth distorted, blossom end rot on fruit – Calcium deficiency",
+        ]},
+    ],
+    results: {
+      "Lower leaves yellow, plant looks generally pale – Nitrogen deficiency": {
+        pest: "Nitrogen deficiency",
+        desc: "Nitrogen moves easily within the plant, so it's pulled from older leaves first to support new growth — causing overall pale, yellowing lower leaves.",
+        treat: "Apply Fish Emulsion 5-1-1 as a foliar or soil drench, or side-dress with compost/worm castings. Repeat every 2 weeks during active growth.",
+        organic: true, reentry: "0 days",
+      },
+      "Purple or reddish tint on stems/undersides – Phosphorus deficiency": {
+        pest: "Phosphorus deficiency",
+        desc: "Common in cool soil or low-pH conditions. Shows as dark green leaves with a purple or reddish tinge, especially on stems and leaf undersides.",
+        treat: "Work bone meal or rock phosphate into the root zone. Check soil pH — phosphorus locks out below pH 5.5. Correct pH first if needed.",
+        organic: true, reentry: "0 days",
+      },
+      "Yellow/brown leaf edges (scorch) on older leaves – Potassium deficiency": {
+        pest: "Potassium deficiency",
+        desc: "Shows as scorched, yellow-brown leaf margins on older leaves, often with weak stems and reduced fruit quality.",
+        treat: "Apply worm castings or a kelp/seaweed-based amendment. Wood ash in small amounts can help in acidic soils — test pH first.",
+        organic: true, reentry: "0 days",
+      },
+      "New growth distorted, blossom end rot on fruit – Calcium deficiency": {
+        pest: "Calcium deficiency",
+        desc: "Often not a true soil shortage but an uptake problem caused by inconsistent watering. Classic sign is blossom end rot on tomatoes and peppers.",
+        treat: "Keep soil moisture consistent — deep, regular watering rather than feast/drought cycles. Apply Calcium Nitrate as a foliar spray for fast correction.",
+        organic: false, reentry: "0 days",
+      },
+    },
+    fallback: { pest: "Unclear nutrient issue", desc: "Symptoms could point to more than one deficiency, or a pH lock-out issue.", treat: "Test soil pH first — many 'deficiencies' are actually lock-out from pH being too high or low. Correct pH before adding more amendments.", organic: false, reentry: "N/A" },
   },
 };
 
-function CropDoctorSection({ userData, activities, userId }) {
-  const [modal,   setModal]   = useState(null);
-  const [step,    setStep]    = useState(0);
-  const [answers, setAnswers] = useState([]);
-  const [dx,      setDx]      = useState(null);
-  const [saving,  setSaving]  = useState(false);
-  const [saved,   setSaved]   = useState(false);
+// "Not sure – guide me" asks this first, then routes into the matching tree above.
+const GUIDED_CHOOSER = {
+  q: "What are you seeing on your plant?",
+  opts: [
+    { label: "I see actual insects or bugs", routeTo: "pest" },
+    { label: "Spots, powder, or fuzzy coating on leaves", routeTo: "disease" },
+    { label: "Yellowing, discoloration, but no visible pests", routeTo: "nutrient" },
+  ],
+};
+
+function CropDoctorSection({ userData, activities, userId, refetchActivities }) {
+  const [modal,      setModal]      = useState(null);   // pest | disease | nutrient | guided
+  const [activeType, setActiveType] = useState(null);   // resolved tree once known
+  const [step,       setStep]       = useState(0);
+  const [answers,    setAnswers]    = useState([]);
+  const [dx,         setDx]         = useState(null);
+  const [saving,     setSaving]     = useState(false);
+  const [saved,      setSaved]      = useState(false);
 
   const ENTRIES = [
     { id: "pest",     icon: "🐛", label: "Pest Problem",        sub: "Guided flowchart · question by question" },
@@ -650,21 +1016,28 @@ function CropDoctorSection({ userData, activities, userId }) {
   // Diagnoses from Firestore activities
   const recentDx = activities.filter(a => a.type === "diagnosis").slice(0, 2);
 
-  const openModal = (id) => { setModal(id); setStep(0); setAnswers([]); setDx(null); setSaved(false); };
-  const closeModal = () => { setModal(null); };
+  const openModal = (id) => {
+    setModal(id);
+    setActiveType(id === "guided" ? null : id);
+    setStep(0); setAnswers([]); setDx(null); setSaved(false);
+  };
+  const closeModal = () => { setModal(null); setActiveType(null); };
+
+  // Guided chooser step (only shown while modal === "guided" and no type resolved yet)
+  const pickGuided = (opt) => {
+    setActiveType(opt.routeTo);
+    setStep(0);
+    setAnswers([]);
+  };
 
   const pick = (opt) => {
+    const tree = DX_TREES[activeType];
     const next = [...answers, opt];
     setAnswers(next);
-    if (step < PEST_STEPS.length - 1) {
+    if (step < tree.steps.length - 1) {
       setStep(step + 1);
     } else {
-      setDx(DX_RESULTS[opt] || {
-        pest: "Unidentified",
-        desc: "Based on your answers, further inspection is recommended.",
-        treat: "Monitor closely. Avoid applying anything until pest is confirmed.",
-        organic: false, reentry: "N/A",
-      });
+      setDx(tree.results[opt] || tree.fallback);
     }
   };
 
@@ -683,7 +1056,8 @@ function CropDoctorSection({ userData, activities, userId }) {
         icon:     "🩺",
         status:   "unread",
         data: {
-          pest:     dx.pest,
+          issueType:   activeType,
+          pest:        dx.pest,
           description: dx.desc,
           treatment:   dx.treat,
           organic:     dx.organic,
@@ -695,6 +1069,7 @@ function CropDoctorSection({ userData, activities, userId }) {
         expiresAt: new Date(Date.now() + 30 * 24 * 864e5),
       });
       setSaved(true);
+      if (refetchActivities) refetchActivities(userId);
     } catch (e) {
       console.error("Diagnosis save failed:", e);
     } finally {
@@ -702,7 +1077,11 @@ function CropDoctorSection({ userData, activities, userId }) {
     }
   };
 
-  const current = PEST_STEPS[step];
+  const showingGuidedChooser = modal === "guided" && !activeType;
+  const current = activeType ? DX_TREES[activeType].steps[step] : null;
+  const modalTitle = showingGuidedChooser
+    ? "What's going on?"
+    : activeType ? DX_TREES[activeType].label : "";
 
   return (
     <div>
@@ -745,13 +1124,24 @@ function CropDoctorSection({ userData, activities, userId }) {
             onClick={e => e.stopPropagation()}
           >
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1.1rem" }}>
-              <h3 style={{ margin: 0, fontSize: "1rem" }}>Pest Diagnosis</h3>
+              <h3 style={{ margin: 0, fontSize: "1rem" }}>{modalTitle}</h3>
               <button onClick={closeModal} style={xBtn}>✕</button>
             </div>
 
-            {!dx ? (
+            {showingGuidedChooser ? (
               <>
-                <div style={{ fontSize: "0.74rem", color: C.textMuted, marginBottom: "0.6rem" }}>Step {step + 1} of {PEST_STEPS.length}</div>
+                <div style={{ background: C.greenLight, borderRadius: 8, padding: "0.7rem 0.9rem", marginBottom: "0.9rem", fontWeight: 600, fontSize: "0.9rem", color: C.text }}>
+                  {GUIDED_CHOOSER.q}
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: "0.45rem" }}>
+                  {GUIDED_CHOOSER.opts.map((o, i) => (
+                    <button key={i} onClick={() => pickGuided(o)} style={flowOpt}>{o.label}</button>
+                  ))}
+                </div>
+              </>
+            ) : !dx ? (
+              <>
+                <div style={{ fontSize: "0.74rem", color: C.textMuted, marginBottom: "0.6rem" }}>Step {step + 1} of {DX_TREES[activeType].steps.length}</div>
                 <div style={{ background: C.greenLight, borderRadius: 8, padding: "0.7rem 0.9rem", marginBottom: "0.9rem", fontWeight: 600, fontSize: "0.9rem", color: C.text }}>
                   {current.q}
                 </div>
@@ -801,43 +1191,96 @@ const xBtn     = { background: "#f0f0f0", border: "none", borderRadius: "50%", w
 const flowOpt  = { width: "100%", padding: "0.7rem 0.9rem", background: "#fff", border: `1px solid ${C.border}`, borderRadius: 8, cursor: "pointer", textAlign: "left", fontSize: "0.85rem", color: C.text };
 
 // ── INPUT LIBRARY ─────────────────────────────────────────────────────────────
-// No inputs collection yet — static reference library.
-// Compatibility check is local logic only.
+// Products + compatibility rules come from the `input_library` and
+// `input_compat_rules` Firestore collections (see firestore.rules). Any
+// signed-in user can add a product from the dashboard; only admin can edit
+// compatibility rules (those carry real safety implications).
 
-const INPUTS_LIB = [
-  { icon: "🌿", name: "Neem Oil",           type: "Insecticide / Fungicide · Organic", rate: "Rate: 1–2% · 20ml/L water" },
-  { icon: "🔵", name: "Copper Fungicide",   type: "Fungicide · Organic",               rate: "Rate: 0.5% · 5g/L water" },
-  { icon: "🐟", name: "Fish Emulsion 5-1-1",type: "Fertilizer · Organic",              rate: "Rate: 30ml/L · foliar or drench" },
-  { icon: "⚪", name: "Calcium Nitrate",    type: "Fertilizer · Synthetic",            rate: "Rate: 2g/L · drench or foliar" },
-  { icon: "🟤", name: "Worm Castings",      type: "Amendment · Organic",               rate: "Rate: 1 cup/plant · top-dress" },
-];
+function useInputLibrary() {
+  const [inputs, setInputs] = useState([]);
+  const [rules,  setRules]  = useState([]);
+  const [status, setStatus] = useState("loading"); // loading | ready | error
+  const [reload, setReload] = useState(0);
 
-const COMPAT_RULES = [
-  { a: "Neem Oil",           b: "Copper Fungicide",    ok: false, note: "Do not tank-mix. Apply separately with 3+ day gap. Copper can denature neem compounds." },
-  { a: "Fish Emulsion 5-1-1",b: "Worm Castings",       ok: true,  note: "Compatible. Combine in drench. Use within 24 hours of mixing." },
-  { a: "Neem Oil",           b: "Fish Emulsion 5-1-1", ok: true,  note: "Compatible. Apply together as foliar drench at dusk." },
-];
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setStatus("loading");
+      try {
+        const [inputSnap, ruleSnap] = await Promise.all([
+          getDocs(collection(db, "input_library")),
+          getDocs(collection(db, "input_compat_rules")),
+        ]);
+        if (cancelled) return;
+        setInputs(inputSnap.docs.map(d => ({ id: d.id, ...d.data() })));
+        setRules(ruleSnap.docs.map(d => ({ id: d.id, ...d.data() })));
+        setStatus("ready");
+      } catch (e) {
+        console.error("input_library fetch error:", e);
+        if (!cancelled) setStatus("error");
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [reload]);
 
-function InputLibrarySection() {
+  return { inputs, rules, status, refetch: () => setReload(r => r + 1) };
+}
+
+function InputLibrarySection({ userId }) {
+  const { inputs, rules, status, refetch } = useInputLibrary();
   const [sel, setSel] = useState([]);
+  const [showAdd, setShowAdd] = useState(false);
+  const [form, setForm] = useState({ name: "", type: "", rate: "", icon: "🧴" });
+  const [saving, setSaving] = useState(false);
 
   const toggle = (name) => setSel(prev =>
     prev.includes(name) ? prev.filter(s => s !== name) : [...prev, name]
   );
 
-  const results = COMPAT_RULES.filter(c =>
+  const results = rules.filter(c =>
     (sel.includes(c.a) && sel.includes(c.b)) ||
     (sel.includes(c.b) && sel.includes(c.a))
   );
 
+  const addProduct = async () => {
+    if (!form.name.trim()) return;
+    setSaving(true);
+    try {
+      await addDoc(collection(db, "input_library"), {
+        name: form.name.trim(),
+        type: form.type.trim() || "Uncategorized",
+        rate: form.rate.trim() || "Rate not set — check label",
+        icon: form.icon || "🧴",
+        addedBy: userId || null,
+        createdAt: serverTimestamp(),
+      });
+      setForm({ name: "", type: "", rate: "", icon: "🧴" });
+      setShowAdd(false);
+      refetch();
+    } catch (e) {
+      console.error("Failed to add input:", e);
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
     <div>
-      <SectionHead title="✏️ Input Library" sub="Your pesticides, amendments & inputs · AI-powered rates & compatibility" />
+      <SectionHead title="✏️ Input Library" sub="Your pesticides, amendments & inputs · Rates & compatibility" />
 
+      {status === "loading" && <p style={{ color: C.textMuted, fontSize: "0.85rem" }}>Loading your input library…</p>}
+      {status === "error"   && <p style={{ color: C.red, fontSize: "0.85rem" }}>Couldn't load inputs. Try again shortly.</p>}
+
+      {status === "ready" && (
       <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: "0.9rem", marginBottom: "1.4rem" }}>
-        {INPUTS_LIB.map((inp, i) => (
+        {inputs.length === 0 && (
+          <p style={{ color: C.textMuted, fontSize: "0.85rem", gridColumn: "1 / -1" }}>
+            No products yet. Add your first one below.
+          </p>
+        )}
+        {inputs.map((inp, i) => (
           <Card
-            key={i}
+            key={inp.id || i}
             onClick={() => toggle(inp.name)}
             style={{ cursor: "pointer", border: `2px solid ${sel.includes(inp.name) ? C.green : "transparent"}`, transition: "border 0.15s" }}
           >
@@ -847,11 +1290,52 @@ function InputLibrarySection() {
             <div style={{ fontSize: "0.78rem", color: C.green, fontWeight: 600 }}>{inp.rate}</div>
           </Card>
         ))}
-        <Card style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", textAlign: "center", cursor: "pointer", border: `2px dashed ${C.border}`, background: "#FAFAFA", minHeight: 120 }}>
-          <div style={{ fontSize: "1.4rem", color: C.textMuted, marginBottom: "0.4rem" }}>📷</div>
-          <div style={{ fontSize: "0.78rem", color: C.textMuted }}>Take a photo or upload a label to add a product</div>
+        <Card
+          onClick={() => setShowAdd(true)}
+          style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", textAlign: "center", cursor: "pointer", border: `2px dashed ${C.border}`, background: "#FAFAFA", minHeight: 120 }}
+        >
+          <div style={{ fontSize: "1.4rem", color: C.textMuted, marginBottom: "0.4rem" }}>➕</div>
+          <div style={{ fontSize: "0.78rem", color: C.textMuted }}>Add a product to your library</div>
         </Card>
       </div>
+      )}
+
+      {showAdd && (
+        <div style={overlay} onClick={() => setShowAdd(false)}>
+          <motion.div
+            initial={{ opacity: 0, scale: 0.96, y: 16 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            style={mBox}
+            onClick={e => e.stopPropagation()}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1.1rem" }}>
+              <h3 style={{ margin: 0, fontSize: "1rem" }}>Add a Product</h3>
+              <button onClick={() => setShowAdd(false)} style={xBtn}>✕</button>
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
+              <div>
+                <label style={{ display: "block", fontSize: "0.76rem", fontWeight: 600, color: C.textMuted, marginBottom: "0.3rem" }}>Name *</label>
+                <input style={inputStyle} value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} placeholder="e.g. Bacillus thuringiensis" />
+              </div>
+              <div>
+                <label style={{ display: "block", fontSize: "0.76rem", fontWeight: 600, color: C.textMuted, marginBottom: "0.3rem" }}>Type</label>
+                <input style={inputStyle} value={form.type} onChange={e => setForm({ ...form, type: e.target.value })} placeholder="e.g. Insecticide · Organic" />
+              </div>
+              <div>
+                <label style={{ display: "block", fontSize: "0.76rem", fontWeight: 600, color: C.textMuted, marginBottom: "0.3rem" }}>Rate</label>
+                <input style={inputStyle} value={form.rate} onChange={e => setForm({ ...form, rate: e.target.value })} placeholder="e.g. 1 tsp/L water" />
+              </div>
+            </div>
+            <button
+              onClick={addProduct}
+              disabled={saving || !form.name.trim()}
+              style={{ ...flowOptFull, marginTop: "1.1rem", background: C.green, color: "#fff", fontWeight: 700, border: "none", opacity: saving ? 0.7 : 1 }}
+            >
+              {saving ? "Saving…" : "Add Product"}
+            </button>
+          </motion.div>
+        </div>
+      )}
 
       <Card>
         <h3 style={{ margin: "0 0 0.4rem", fontSize: "0.95rem" }}>🔗 Compatibility Check</h3>
@@ -1051,10 +1535,32 @@ function ProfileSection({ userData }) {
 // ── ROOT ──────────────────────────────────────────────────────────────────────
 export default function GrowerDashboard() {
   const [section,    setSection]    = useState("home");
+  const [addPlantingSignal, setAddPlantingSignal] = useState(0);
+  const [logModalType, setLogModalType] = useState(null); // harvest|sale|spray|observation|amendment|restock
   const [userData,   setUserData]   = useState(null);
   const [activities, setActivities] = useState([]);
   const [userId,     setUserId]     = useState(null);
   const [loading,    setLoading]    = useState(true);
+
+  // Reusable — called on initial load, after any Quick Action write, and on
+  // every section change so data from CropPlanner / LogActivityModal /
+  // Crop Doctor shows up without a full page reload.
+  const refetchActivities = useCallback(async (uid) => {
+    const targetUid = uid || userId;
+    if (!targetUid) return;
+    try {
+      const q = query(
+        collection(db, "activities"),
+        where("userId", "==", targetUid),
+        orderBy("createdAt", "desc"),
+        limit(100)
+      );
+      const acts = await getDocs(q);
+      setActivities(acts.docs.map(d => ({ id: d.id, ...d.data() })));
+    } catch (e) {
+      console.error("refetchActivities error:", e);
+    }
+  }, [userId]);
 
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, async (user) => {
@@ -1078,14 +1584,7 @@ export default function GrowerDashboard() {
 
         // Read activities — filtered by userId, ordered by createdAt desc, limit 100
         // Firestore rules: activities readable only when resource.data.userId == auth.uid
-        const q = query(
-          collection(db, "activities"),
-          where("userId", "==", user.uid),
-          orderBy("createdAt", "desc"),
-          limit(100)
-        );
-        const acts = await getDocs(q);
-        setActivities(acts.docs.map(d => ({ id: d.id, ...d.data() })));
+        await refetchActivities(user.uid);
       } catch (e) {
         console.error("GrowerDashboard load error:", e);
       } finally {
@@ -1093,7 +1592,16 @@ export default function GrowerDashboard() {
       }
     });
     return () => unsub();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Refresh activities whenever the user switches tabs — cheap, and covers
+  // writes made by CropPlanner (Farm tab) that this component doesn't
+  // otherwise get notified about.
+  useEffect(() => {
+    if (userId) refetchActivities(userId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [section]);
 
   if (loading) {
     return (
@@ -1104,7 +1612,12 @@ export default function GrowerDashboard() {
     );
   }
 
-  const shared = { userData, activities, userId };
+  const shared = {
+    userData, activities, userId, setSection,
+    bumpAddPlanting: () => setAddPlantingSignal(s => s + 1),
+    openLogModal: (type) => setLogModalType(type),
+    refetchActivities,
+  };
 
   return (
     <div style={{ display: "flex", height: "100vh", overflow: "hidden", fontFamily: "'Inter',sans-serif" }}>
@@ -1117,14 +1630,26 @@ export default function GrowerDashboard() {
           transition={{ duration: 0.18 }}
         >
           {section === "home"    && <HomeSection      {...shared} />}
-          {section === "farm"    && <FarmSection      {...shared} />}
+          {section === "farm"    && <FarmSection      {...shared} addPlantingSignal={addPlantingSignal} />}
           {section === "market"  && <MarketSection    {...shared} />}
           {section === "doctor"  && <CropDoctorSection {...shared} />}
-          {section === "inputs"  && <InputLibrarySection />}
+          {section === "inputs"  && <InputLibrarySection userId={userId} />}
           {section === "history" && <HistorySection   {...shared} />}
           {section === "profile" && <ProfileSection   {...shared} />}
         </motion.div>
       </main>
+
+      {logModalType && (
+        <LogActivityModal
+          type={logModalType}
+          userId={userId}
+          onClose={() => setLogModalType(null)}
+          onSaved={async () => {
+            await refetchActivities(userId);
+            setLogModalType(null);
+          }}
+        />
+      )}
     </div>
   );
 }
