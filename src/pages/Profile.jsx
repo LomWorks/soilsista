@@ -24,18 +24,18 @@ function TagInput({ value = [], onChange, placeholder }) {
 
   return (
     <div style={tagStyles.container}>
-      {.map(tag => (
+      {value.map(tag => (
         <span key={tag} style={tagStyles.tag}>
           {tag}
           <button type="button" onClick={() => removeTag(tag)} style={tagStyles.removeBtn}>×</button>
         </span>
       ))}
       <input
-        type="text" ={inputVal}
-        onChange={e => setInputVal(e.target.)}
+        type="text" value={inputVal}
+        onChange={e => setInputVal(e.target.value)}
         onKeyDown={handleKeyDown}
         onBlur={addTag}
-        placeholder={.length === 0 ? placeholder : "Add another…"}
+        placeholder={value.length === 0 ? placeholder : "Add another…"}
         style={tagStyles.input}
       />
     </div>
@@ -195,18 +195,18 @@ export default function Profile() {
         <Section title="👤 Account" delay={0.05}>
           <Field label="Name" required error={errors.name}>
             <input
-              ={name} onChange={e => { setName(e.target.); setErrors({ ...errors, name: null }); }}
+              value={name} onChange={e => { setName(e.target.value); setErrors({ ...errors, name: null }); }}
               placeholder="Your full name" style={{ ...styles.input, borderColor: errors.name ? "#ef4444" : "#ddd" }}
             />
           </Field>
           <Field label="Email">
-            <input ={userData?.email || ""} disabled style={{ ...styles.input, ...styles.inputDisabled }} />
+            <input value={userData?.email || ""} disabled style={{ ...styles.input, ...styles.inputDisabled }} />
             <span style={styles.fieldHint}>Email cannot be changed here</span>
           </Field>
           {userData?.planType === "paid" && (
             <Field label="WhatsApp Phone">
               <input
-                type="tel" ={phone} onChange={e => setPhone(e.target.)}
+                type="tel" value={phone} onChange={e => setPhone(e.target.value)}
                 placeholder="+1 268 XXX XXXX" style={styles.input}
               />
             </Field>
@@ -217,17 +217,17 @@ export default function Profile() {
         <Section title="📍 Location" delay={0.1}>
           <Field label="Island" required error={errors.island}>
             <select
-              ={island}
-              onChange={e => { setIsland(e.target.); setErrors({ ...errors, island: null }); }}
+              value={island}
+              onChange={e => { setIsland(e.target.value); setErrors({ ...errors, island: null }); }}
               style={{ ...styles.input, borderColor: errors.island ? "#ef4444" : "#ddd" }}
             >
-              <option ="">Select your island</option>
-              {CARIBBEAN_ISLANDS.map(i => <option key={i} ={i}>{i}</option>)}
+              <option value="">Select your island</option>
+              {CARIBBEAN_ISLANDS.map(i => <option key={i} value={i}>{i}</option>)}
             </select>
           </Field>
           <Field label="Settlement / Area" required error={errors.settlement}>
             <input
-              ={settlement}
+              value={settlement}
               onChange={e => { setSettlement(e.target.value); setErrors({ ...errors, settlement: null }); }}
               placeholder="e.g., St. John's, All Saints, Parham"
               style={{ ...styles.input, borderColor: errors.settlement ? "#ef4444" : "#ddd" }}
@@ -245,6 +245,8 @@ export default function Profile() {
               style={{ ...styles.input, borderColor: errors.farmSize ? "#ef4444" : "#ddd" }}
             />
           </Field>
+          <Field label="Farming Type" optional>
+            <input
                value={farmingType} onChange={e => setFarmingType(e.target.value)}
               placeholder="e.g., Crop farming, Mixed farming, Livestock"
               style={styles.input}
@@ -266,6 +268,7 @@ export default function Profile() {
               value={currentCrops} onChange={setCurrentCrops}
               placeholder="e.g., Tomatoes, Peppers, Lettuce"
             />
+          </Field>
           <Field label="Growing Sites" optional hint="Press Enter or comma to add each site">
             <TagInput
               value={growingSites} onChange={setGrowingSites}
