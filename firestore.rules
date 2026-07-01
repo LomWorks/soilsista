@@ -74,5 +74,41 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
+    // ─────────────────────────────────────────────────────────────────────
+    // MARKET_PRICES collection
+    //   Reference prices shown in Market Insights ("MARKET" column).
+    //   Read  — any signed-in user
+    //   Write — admin only (these are shared reference figures, not
+    //           per-user data — a single bad edit affects everyone's view)
+    // ─────────────────────────────────────────────────────────────────────
+    match /market_prices/{priceId} {
+      allow read:  if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // INPUT_LIBRARY collection
+    //   Pesticides / amendments / fertilizers shown in the Input Library.
+    //   Read   — any signed-in user
+    //   Create — any signed-in user (dashboard "Add a product" flow)
+    //   Update/delete — admin only (avoid one user editing another's entry)
+    // ─────────────────────────────────────────────────────────────────────
+    match /input_library/{inputId} {
+      allow read:   if isSignedIn();
+      allow create: if isSignedIn();
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // INPUT_COMPAT_RULES collection
+    //   Tank-mix safety rules shown in the Input Library compatibility
+    //   checker. Safety-relevant — admin-managed only, read-only for users.
+    // ─────────────────────────────────────────────────────────────────────
+    match /input_compat_rules/{ruleId} {
+      allow read:  if isSignedIn();
+      allow write: if isAdmin();
+    }
+
   }
 }
