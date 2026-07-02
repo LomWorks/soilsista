@@ -177,6 +177,8 @@ export default function CropPlanner({ userData, autoOpenSignal }) {
   // Real market prices — used for the value-estimate column when a match
   // exists. Shows "—" rather than a made-up number when it doesn't.
   const [marketPrices, setMarketPrices] = useState([]);
+
+  
   useEffect(() => {
     (async () => {
       try {
