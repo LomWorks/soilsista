@@ -222,7 +222,6 @@ function HomeSection({ userData, activities, userId, setSection, bumpAddPlanting
 
   // ── Today's tasks: reminders + upcoming crop events ───────────────────────
   const today   = new Date(); today.setHours(0, 0, 0, 0);
-  const in14    = new Date(today.getTime() + 14 * 864e5);
 
   const reminders = activities
     .filter(a => a.type === "reminder" && a.status !== "completed")
