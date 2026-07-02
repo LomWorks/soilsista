@@ -3,7 +3,7 @@ import Home from "./pages/Home";
 import About from "./pages/About";
 import Contact from "./pages/Contact";
 import EnhancedOnboarding from "./pages/EnhancedOnboarding";
-import GrowerDashboard from "./pages/GrowerDashboard";
+import Dashboard from "./pages/Dashboard";
 import AdminPanel from "./pages/Adminpanel";
 import Login from "./pages/Login";
 import Profile from "./pages/Profile";
@@ -21,7 +21,7 @@ function App() {
         <Route path="/about"       element={<About />} />
         <Route path="/contact"     element={<Contact />} />
         <Route path="/get-started" element={<EnhancedOnboarding />} />
-        <Route path="/dashboard"   element={<SessionGuard><GrowerDashboard /></SessionGuard>} />
+        <Route path="/dashboard"   element={<SessionGuard><Dashboard /></SessionGuard>} />
         <Route path="/profile"     element={<SessionGuard><Profile /></SessionGuard>} />
         <Route path="/login"       element={<Login />} />
         <Route path="/admin"       element={<AdminPanel />} />
