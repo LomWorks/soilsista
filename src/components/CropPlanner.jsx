@@ -33,6 +33,97 @@ function getMoonPhase(date) {
 }
 
 // ── Active crop card helpers ──────────────────────────────────────────────────
+// ── Bed geometry math ──────────────────────────────────────────────────────
+// crop.spacing in the crops collection is a free-text string (e.g.
+// "18in row x 12in plant", "45cm x 30cm"). This pulls the first two numbers
+// out of it as row/plant spacing. Convention: row spacing is listed first.
+// Returns null if it can't confidently parse two numbers — callers must
+// treat that as "can't compute from geometry" and fall back gracefully,
+// never fabricate a spacing value.
+function parseSpacingToInches(spacingStr) {
+  if (!spacingStr || typeof spacingStr !== "string") return null;
+  const matches = [...spacingStr.matchAll(/(\d+(?:\.\d+)?)\s*(in|inch|inches|cm|centimeters?|ft|feet|')?/gi)];
+  if (matches.length < 2) return null;
+
+  const toInches = (value, unit) => {
+    const u = (unit || "in").toLowerCase();
+    if (u.startsWith("cm") || u.startsWith("centimeter")) return value / 2.54;
+    if (u.startsWith("ft") || u.startsWith("feet") || u === "'") return value * 12;
+    return value; // default: already inches
+  };
+
+  const row   = toInches(parseFloat(matches[0][1]), matches[0][2]);
+  const plant = toInches(parseFloat(matches[1][1]), matches[1][2]);
+  if (!row || !plant || row <= 0 || plant <= 0) return null;
+  return { rowIn: row, plantIn: plant };
+}
+
+// Checks the spacing BETWEEN rows (across bed width) against the crop's
+// recommended row spacing. Returns null if there's not enough input yet.
+function checkRowSpacing(widthFt, rows, spacingParsed) {
+  const width = parseFloat(widthFt);
+  const r = parseInt(rows, 10);
+  if (!width || !r || width <= 0 || r <= 0) return null;
+  const rowSpacingIn = (width * 12) / r;
+  if (!spacingParsed) return { rowSpacingIn, warning: null };
+  const minRequired = spacingParsed.rowIn;
+  const warning = rowSpacingIn < minRequired
+    ? `${r} rows in ${width}ft = ${Math.round(rowSpacingIn)}" — tighter than this crop's ${Math.round(minRequired)}" row spacing. Try fewer rows or a wider bed.`
+    : null;
+  return { rowSpacingIn, minRequired, warning };
+}
+
+// The three spacing scenarios shown as cards. Plant count comes straight from
+// bed length ÷ in-row spacing × rows × beds — real geometry, not a guess.
+// Yield/value only appear when we can derive them from real data (crop.yieldPerBed
+// for yield, a matching market_prices entry for value) — never fabricated.
+function computeSpacingScenarios({ crop, lengthFt, widthFt, rows, numBeds, marketPrice }) {
+  const length = parseFloat(lengthFt);
+  const r = parseInt(rows, 10);
+  const beds = parseInt(numBeds, 10) || 1;
+  const spacingParsed = parseSpacingToInches(crop?.spacing);
+  if (!length || !r || !spacingParsed || length <= 0 || r <= 0) return null;
+
+  const optimalIn = spacingParsed.plantIn;
+  const scenarios = {
+    optimal: { key: "optimal", label: "Optimal spacing", tag: "Recommended", inRowIn: optimalIn,
+      blurb: "Best balance of yield and plant health." },
+    minimum: { key: "minimum", label: "Tighter spacing", tag: "Max yield", inRowIn: optimalIn * 0.85,
+      blurb: "More plants — watch airflow and disease risk.", caution: true },
+    maximum: { key: "maximum", label: "Wider spacing", tag: "More airflow", inRowIn: optimalIn * 1.15,
+      blurb: "Fewer, bigger plants — better airflow." },
+  };
+
+  const plantsPerBedAtOptimal = Math.floor((length * 12) / optimalIn) * r;
+  const yieldPerPlant = plantsPerBedAtOptimal > 0 && crop.yieldPerBed
+    ? crop.yieldPerBed / plantsPerBedAtOptimal
+    : null;
+
+  Object.values(scenarios).forEach(sc => {
+    sc.plantsPerRow = Math.floor((length * 12) / sc.inRowIn);
+    sc.plantsPerBed = sc.plantsPerRow * r;
+    sc.totalPlants  = sc.plantsPerBed * beds;
+    sc.yieldEst  = yieldPerPlant != null ? +(sc.totalPlants * yieldPerPlant).toFixed(1) : null;
+    sc.valueEst  = (sc.yieldEst != null && marketPrice) ? Math.round(sc.yieldEst * marketPrice) : null;
+  });
+
+  return scenarios;
+}
+
+// Condensed — consumer-facing, not a full agronomy writeup.
+const SEEDLING_METHODS = {
+  buy:    { label: "Buy Seedlings",  tag: "Recommended", blurb: "Fastest to harvest, no nursery work.",     cost: "Medium",  labor: "Low"    },
+  raise:  { label: "Raise Own",      tag: "Lowest cost", blurb: "Cheapest at scale, needs daily care.",      cost: "Lowest",  labor: "High"   },
+  direct: { label: "Direct Sow",     tag: "Simplest",    blurb: "No transplant shock, simplest to set up.",  cost: "Low",     labor: "Medium" },
+};
+
+const SUCCESSION_OPTIONS = [
+  { key: "none",     label: "Single planting",        blurb: "No repeat sowing — plan your next batch manually." },
+  { key: "auto",     label: "Recommended interval",    blurb: null }, // blurb filled in with computed date
+  { key: "biweekly", label: "Every 2 weeks",            blurb: null },
+  { key: "monthly",  label: "Every month",              blurb: null },
+];
+
 function getDaysToHarvest(sowDateRaw, weeksToHarvest) {
   if (!sowDateRaw) return null;
   const sow = sowDateRaw?.toDate ? sowDateRaw.toDate() : new Date(sowDateRaw);
@@ -52,8 +143,14 @@ function getProgressPercent(sowDateRaw, weeksToHarvest) {
 }
 
 // ── Main Component ────────────────────────────────────────────────────────────
-export default function CropPlanner({ userData }) {
+export default function CropPlanner({ userData, autoOpenSignal }) {
   const [showModal, setShowModal] = useState(false);
+
+  // Allows a parent (e.g. Home's "Add Planting" quick action) to trigger the
+  // add-crop modal by bumping autoOpenSignal — no internal state coupling needed.
+  useEffect(() => {
+    if (autoOpenSignal) setShowModal(true);
+  }, [autoOpenSignal]);
   const [savedPlans, setSavedPlans] = useState([]);
   const [loadingPlans, setLoadingPlans] = useState(true);
 
@@ -62,14 +159,43 @@ export default function CropPlanner({ userData }) {
   const [loadingCrops, setLoadingCrops] = useState(true);
 
   // Form state
+  const [wizardStep, setWizardStep] = useState(0); // 0 crop, 1 bed+spacing, 2 seedling method, 3 summary, 4 succession
   const [selectedCrop, setSelectedCrop] = useState("");
   const [startDate, setStartDate] = useState(new Date().toISOString().split('T')[0]);
   const [numBeds, setNumBeds] = useState(1);
+  const [bedLengthFt, setBedLengthFt] = useState("");
+  const [bedWidthFt, setBedWidthFt] = useState("");
+  const [bedRows, setBedRows] = useState(1);
+  const [spacingChoice, setSpacingChoice] = useState("optimal");
+  const [seedlingMethod, setSeedlingMethod] = useState("buy");
+  const [successionChoice, setSuccessionChoice] = useState("none");
   const [growingSeasonWeeks, setGrowingSeasonWeeks] = useState(52);
-  const [schedule, setSchedule] = useState(null);
   const [saving, setSaving] = useState(false);
   const [errors, setErrors] = useState({});
   const [moonMode, setMoonMode] = useState(false);
+
+  // Real market prices — used for the value-estimate column when a match
+  // exists. Shows "—" rather than a made-up number when it doesn't.
+  const [marketPrices, setMarketPrices] = useState([]);
+  useEffect(() => {
+    (async () => {
+      try {
+        const snap = await getDocs(collection(db, "market_prices"));
+        setMarketPrices(snap.docs.map(d => d.data()));
+      } catch (e) {
+        console.error("Error fetching market prices:", e);
+      }
+    })();
+  }, []);
+
+  const matchedMarketPrice = (() => {
+    if (!selectedCrop) return null;
+    const cropLower = selectedCrop.toLowerCase();
+    const match = marketPrices.find(m =>
+      m.key && (cropLower.includes(m.key) || m.key.includes(cropLower))
+    );
+    return match ? Number(match.market) : null;
+  })();
 
   const currentMoon = getMoonPhase(new Date(startDate));
 
@@ -127,6 +253,9 @@ export default function CropPlanner({ userData }) {
     sowDate: p.data?.sowDate || null,
     harvestStart: p.data?.harvestStart || null,
     numBeds: p.data?.numBeds || 1,
+    bedLengthFt: p.data?.bedLengthFt || null,
+    bedWidthFt:  p.data?.bedWidthFt  || null,
+    plantsPerBed: p.data?.plantsPerBed || null,
     estimatedYield: p.data?.estimatedYield || null,
     source: "plan"
   }));
@@ -136,20 +265,21 @@ export default function CropPlanner({ userData }) {
   const filteredProfileCrops = profileCrops.filter(c => !planCropNames.has(c.cropName));
   const activeCrops = [...planCrops, ...filteredProfileCrops];
 
-  const validateInputs = () => {
-    const newErrors = {};
-    if (!selectedCrop) newErrors.crop = "Please select a crop";
-    const selectedDate = new Date(startDate);
-    const today = new Date(); today.setHours(0, 0, 0, 0);
-    if (selectedDate < today) newErrors.date = "Start date cannot be in the past";
-    if (numBeds < 1 || numBeds > 100) newErrors.beds = "Number of beds must be between 1 and 100";
-    setErrors(newErrors);
-    return Object.keys(newErrors).length === 0;
-  };
+  const crop = selectedCrop ? cropDatabase[selectedCrop] : null;
+  const spacingParsed = crop ? parseSpacingToInches(crop.spacing) : null;
 
-  const generateSchedule = () => {
-    if (!validateInputs()) return;
-    const crop = cropDatabase[selectedCrop];
+  // Live row-spacing check — updates as the grower types width/rows
+  const rowCheck = checkRowSpacing(bedWidthFt, bedRows, spacingParsed);
+
+  // Live spacing scenarios (Optimal/Tighter/Wider) — updates as the grower types
+  const scenarios = crop ? computeSpacingScenarios({
+    crop, lengthFt: bedLengthFt, widthFt: bedWidthFt, rows: bedRows, numBeds, marketPrice: matchedMarketPrice,
+  }) : null;
+  const selectedScenario = scenarios ? scenarios[spacingChoice] : null;
+
+  // Planting timeline — same cycle math as before, now keyed to the chosen
+  // spacing scenario's plant count instead of a flat seedsPerSowing fallback.
+  const timeline = crop ? (() => {
     const start = new Date(startDate);
     const totalCycle = crop.weeksToHarvest + crop.weeksOfHarvest + (crop.stalebedWeeks || 0);
     const traySowDate = new Date(start);
@@ -161,88 +291,132 @@ export default function CropPlanner({ userData }) {
     harvestEndDate.setDate(harvestEndDate.getDate() + crop.weeksOfHarvest * 7);
     const bedTurnoverDate = new Date(harvestEndDate);
     bedTurnoverDate.setDate(bedTurnoverDate.getDate() + (crop.stalebedWeeks || 0) * 7);
-    const cyclesPerYear = Math.floor(growingSeasonWeeks / totalCycle);
-    const totalYield = crop.yieldPerBed * numBeds * cyclesPerYear;
-    const successionInterval = Math.ceil(totalCycle / 2);
-    setSchedule({
-      crop: selectedCrop,
-      cropData: crop,
-      traySowDate: traySowDate.toLocaleDateString(),
-      transplantDate: (crop.weeksInTrays || 0) > 0 ? transplantDate.toLocaleDateString() : null,
-      harvestStartDate: harvestStartDate.toLocaleDateString(),
-      harvestEndDate: harvestEndDate.toLocaleDateString(),
-      bedTurnoverDate: (crop.stalebedWeeks || 0) > 0 ? bedTurnoverDate.toLocaleDateString() : null,
-      totalCycleWeeks: totalCycle,
-      cyclesPerYear,
-      numBeds,
-      totalSeeds: (crop.seedsPerSowing || 0) * numBeds,
-      totalSeedsForYear: (crop.seedsPerSowing || 0) * numBeds * cyclesPerYear,
-      estimatedYield: `${totalYield.toLocaleString()} ${crop.yieldUnit}`,
-      yieldPerCycle: `${(crop.yieldPerBed * numBeds).toLocaleString()} ${crop.yieldUnit}`,
-      successionInterval,
-      sowDate: traySowDate,
-      transplantDateObj: (crop.weeksInTrays || 0) > 0 ? transplantDate : null,
-      harvestDate: harvestStartDate,
+    const cyclesPerYear = Math.floor(growingSeasonWeeks / totalCycle) || 1;
+    const successionWeeks = Math.ceil(totalCycle / 2);
+    return {
+      totalCycle, cyclesPerYear, successionWeeks,
+      traySowDate, transplantDate, harvestStartDate, harvestEndDate, bedTurnoverDate,
       moon: moonMode ? {
         sow: getMoonPhase(traySowDate),
         transplant: (crop.weeksInTrays || 0) > 0 ? getMoonPhase(transplantDate) : null,
         harvest: getMoonPhase(harvestStartDate),
       } : null,
-    });
+    };
+  })() : null;
+
+  const successionDates = timeline ? (() => {
+    const weeksFor = { auto: timeline.successionWeeks, biweekly: 2, monthly: 4 }[successionChoice];
+    if (!weeksFor) return null;
+    const first = new Date(timeline.traySowDate);
+    first.setDate(first.getDate() + weeksFor * 7);
+    const second = new Date(first);
+    second.setDate(second.getDate() + weeksFor * 7);
+    return { first, second };
+  })() : null;
+
+  // ── Per-step validation ─────────────────────────────────────────────────
+  const step0Valid = () => {
+    const newErrors = {};
+    if (!selectedCrop) newErrors.crop = "Please select a crop";
+    const selectedDate = new Date(startDate);
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    if (selectedDate < today) newErrors.date = "Start date cannot be in the past";
+    setErrors(newErrors);
+    return Object.keys(newErrors).length === 0;
+  };
+  const step1Valid = () => {
+    const newErrors = {};
+    if (numBeds < 1 || numBeds > 100) newErrors.beds = "Beds must be between 1 and 100";
+    if (!bedLengthFt || Number(bedLengthFt) <= 0) newErrors.length = "Enter bed length";
+    if (!bedWidthFt  || Number(bedWidthFt)  <= 0) newErrors.width  = "Enter bed width";
+    if (!bedRows     || Number(bedRows)     <= 0) newErrors.rows   = "Enter rows per bed";
+    setErrors(newErrors);
+    return Object.keys(newErrors).length === 0 && !!scenarios;
+  };
+
+  const goNext = () => {
+    if (wizardStep === 0 && !step0Valid()) return;
+    if (wizardStep === 1 && !step1Valid()) return;
+    setWizardStep(s => Math.min(s + 1, 4));
+  };
+  const goBack = () => setWizardStep(s => Math.max(s - 1, 0));
+
+  const resetWizard = () => {
+    setWizardStep(0);
+    setSelectedCrop("");
+    setBedLengthFt("");
+    setBedWidthFt("");
+    setBedRows(1);
+    setNumBeds(1);
+    setSpacingChoice("optimal");
+    setSeedlingMethod("buy");
+    setSuccessionChoice("none");
+    setErrors({});
   };
 
   const savePlan = async () => {
     if (!userData?.userId) { alert("Please log in to save plans"); return; }
-    if (!schedule) { alert("Please generate a schedule first"); return; }
+    if (!crop || !timeline || !selectedScenario) { alert("Please complete the planting details first"); return; }
     setSaving(true);
     try {
+      const yieldLabel = selectedScenario.yieldEst != null
+        ? `${selectedScenario.yieldEst.toLocaleString()} ${crop.yieldUnit}`
+        : null;
       const docRef = await addDoc(collection(db, "activities"), {
         userId: userData.userId,
         type: "crop_plan",
         category: "farming",
-        title: `${schedule.crop} Planting Plan`,
-        message: `Plan for ${schedule.numBeds} bed(s) of ${schedule.crop}. Sow on ${schedule.traySowDate}, harvest starting ${schedule.harvestStartDate}.`,
+        title: `${selectedCrop} Planting Plan`,
+        message: `${numBeds} bed(s) of ${selectedCrop}, ${selectedScenario.totalPlants.toLocaleString()} plants. Sow ${timeline.traySowDate.toLocaleDateString()}, harvest from ${timeline.harvestStartDate.toLocaleDateString()}.`,
         icon: "🌱",
         status: "planned",
         data: {
-          cropName: schedule.crop,
-          sowDate: schedule.sowDate,
-          transplantDate: schedule.transplantDateObj,
-          harvestStart: schedule.harvestDate,
-          numBeds: schedule.numBeds,
-          seedsNeeded: schedule.totalSeeds,
-          totalSeedsForYear: schedule.totalSeedsForYear,
-          spacing: schedule.cropData.spacing,
-          mulchRequired: schedule.cropData.mulch,
-          estimatedYield: schedule.estimatedYield,
-          yieldPerCycle: schedule.yieldPerCycle,
-          totalCycleWeeks: schedule.totalCycleWeeks,
-          cyclesPerYear: schedule.cyclesPerYear,
-          successionInterval: schedule.successionInterval,
-          moonPlanning: schedule.moon ? true : false,
+          cropName: selectedCrop,
+          sowDate: timeline.traySowDate,
+          transplantDate: (crop.weeksInTrays || 0) > 0 ? timeline.transplantDate : null,
+          harvestStart: timeline.harvestStartDate,
+          numBeds,
+          bedLengthFt: Number(bedLengthFt),
+          bedWidthFt: Number(bedWidthFt),
+          bedRows: Number(bedRows),
+          spacingChoice,
+          plantsPerBed: selectedScenario.plantsPerBed,
+          seedsNeeded: selectedScenario.totalPlants,
+          totalSeedsForYear: selectedScenario.totalPlants * timeline.cyclesPerYear,
+          spacing: crop.spacing,
+          mulchRequired: crop.mulch,
+          estimatedYield: yieldLabel,
+          estimatedValue: selectedScenario.valueEst,
+          seedlingMethod,
+          totalCycleWeeks: timeline.totalCycle,
+          cyclesPerYear: timeline.cyclesPerYear,
+          successionChoice,
+          moonPlanning: !!timeline.moon,
         },
         createdAt: new Date(),
         expiresAt: null
       });
       await updateDoc(doc(db, "users", userData.userId), {
-        currentCrops: arrayUnion(schedule.crop),
+        currentCrops: arrayUnion(selectedCrop),
         "stats.cropsPlanted": (userData.stats?.cropsPlanted || 0) + 1,
       });
       // Add to local state immediately so card appears without refetch
       setSavedPlans(prev => [...prev, {
         id: docRef.id,
         data: {
-          cropName: schedule.crop,
-          sowDate: schedule.sowDate,
-          harvestStart: schedule.harvestDate,
-          numBeds: schedule.numBeds,
-          estimatedYield: schedule.estimatedYield,
+          cropName: selectedCrop,
+          sowDate: timeline.traySowDate,
+          harvestStart: timeline.harvestStartDate,
+          numBeds,
+          bedLengthFt: Number(bedLengthFt),
+          bedWidthFt: Number(bedWidthFt),
+          plantsPerBed: selectedScenario.plantsPerBed,
+          estimatedYield: yieldLabel,
         }
       }]);
       setSaving(false);
       setShowModal(false);
-      setSchedule(null);
-      setSelectedCrop("");
+      resetWizard();
     } catch (error) {
       console.error("Error saving plan:", error);
       alert("Failed to save plan. Please try again.");
@@ -257,7 +431,7 @@ export default function CropPlanner({ userData }) {
       <section style={s.section}>
         <div style={s.sectionHeader}>
           <h3 style={s.sectionTitle}>Active Crops</h3>
-          <button style={s.addBtn} onClick={() => { setShowModal(true); setSchedule(null); }}>
+          <button style={s.addBtn} onClick={() => { setShowModal(true); resetWizard(); }}>
             + Add a crop
           </button>
         </div>
@@ -296,147 +470,256 @@ export default function CropPlanner({ userData }) {
               transition={{ type: "spring", damping: 24, stiffness: 280 }}
               style={s.modal}
             >
+              <div style={s.dragHandle} />
               <div style={s.modalHeader}>
-                <h3 style={s.modalTitle}>Plan a Crop</h3>
+                <h3 style={s.modalTitle}>{WIZARD_TITLES[wizardStep]}</h3>
                 <button style={s.closeBtn} onClick={() => setShowModal(false)}>✕</button>
               </div>
-
-              {/* Moon toggle */}
-              <div style={s.moonRow}>
-                <button
-                  onClick={() => setMoonMode(m => !m)}
-                  style={{ ...s.moonChip, ...(moonMode ? s.moonChipOn : {}) }}
-                >
-                  {moonMode ? `${currentMoon.emoji} Moon On` : "🌑 Moon Planning"}
-                </button>
+              <div style={s.stepDots}>
+                {[0, 1, 2, 3, 4].map(i => (
+                  <span key={i} style={{ ...s.stepDot, ...(i === wizardStep ? s.stepDotOn : {}) }} />
+                ))}
               </div>
 
-              {moonMode && (
-                <motion.div
-                  initial={{ opacity: 0, height: 0 }}
-                  animate={{ opacity: 1, height: "auto" }}
-                  style={{ ...s.moonHint, borderLeft: `3px solid ${currentMoon.color}` }}
-                >
-                  <span style={{ fontSize: "1.4rem" }}>{currentMoon.emoji}</span>
-                  <div>
-                    <div style={{ fontWeight: 600, color: currentMoon.color, fontSize: "0.9rem" }}>
-                      {currentMoon.name} · {currentMoon.label}
-                    </div>
-                    <div style={{ fontSize: "0.82rem", color: "#666", marginTop: 2 }}>{currentMoon.tip}</div>
+              {/* ── Step 0: Crop + Date ──────────────────────────────── */}
+              {wizardStep === 0 && (
+                <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
+                  <div style={s.moonRow}>
+                    <button
+                      onClick={() => setMoonMode(m => !m)}
+                      style={{ ...s.moonChip, ...(moonMode ? s.moonChipOn : {}) }}
+                    >
+                      {moonMode ? `${currentMoon.emoji} Moon On` : "🌑 Moon Planning"}
+                    </button>
                   </div>
-                </motion.div>
-              )}
 
-              {/* Form */}
-              <div style={s.formGroup}>
-                <label style={s.label}>Crop *</label>
-                {loadingCrops ? (
-                  <div style={s.cropLoadingHint}>Loading crops…</div>
-                ) : (
-                  <select
-                    value={selectedCrop}
-                    onChange={e => { setSelectedCrop(e.target.value); setErrors({ ...errors, crop: null }); setSchedule(null); }}
-                    style={{ ...s.input, borderColor: errors.crop ? "#ef4444" : "#ddd" }}
-                  >
-                    <option value="">Choose a crop…</option>
-                    {Object.keys(cropDatabase).sort().map(name => (
-                      <option key={name} value={name}>
-                        {cropDatabase[name].emoji} {name}
-                      </option>
-                    ))}
-                  </select>
-                )}
-                {errors.crop && <span style={s.errorText}>{errors.crop}</span>}
-              </div>
+                  {moonMode && (
+                    <motion.div
+                      initial={{ opacity: 0, height: 0 }}
+                      animate={{ opacity: 1, height: "auto" }}
+                      style={{ ...s.moonHint, borderLeft: `3px solid ${currentMoon.color}` }}
+                    >
+                      <span style={{ fontSize: "1.4rem" }}>{currentMoon.emoji}</span>
+                      <div>
+                        <div style={{ fontWeight: 600, color: currentMoon.color, fontSize: "0.9rem" }}>
+                          {currentMoon.name} · {currentMoon.label}
+                        </div>
+                        <div style={{ fontSize: "0.82rem", color: "#666", marginTop: 2 }}>{currentMoon.tip}</div>
+                      </div>
+                    </motion.div>
+                  )}
 
-              {/* Crop quick info */}
-              {selectedCrop && cropDatabase[selectedCrop] && (
-                <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} style={s.quickInfo}>
-                  <QuickStat label="Weeks to harvest" value={cropDatabase[selectedCrop].weeksToHarvest} />
-                  <QuickStat label="Yield per bed" value={`${cropDatabase[selectedCrop].yieldPerBed} ${cropDatabase[selectedCrop].yieldUnit}`} />
-                  <QuickStat label="Mulch" value={cropDatabase[selectedCrop].mulch ? "Yes" : "No"} />
-                  <QuickStat label="Varieties" value={(cropDatabase[selectedCrop].varieties || []).join(", ")} />
-                </motion.div>
-              )}
-
-              <div style={s.formRow}>
-                <div style={{ flex: 1 }}>
-                  <label style={s.label}>Start Date *</label>
-                  <input
-                    type="date" value={startDate}
-                    onChange={e => { setStartDate(e.target.value); setErrors({ ...errors, date: null }); setSchedule(null); }}
-                    style={{ ...s.input, borderColor: errors.date ? "#ef4444" : "#ddd" }}
-                  />
-                  {errors.date && <span style={s.errorText}>{errors.date}</span>}
-                </div>
-                <div style={{ width: "110px" }}>
-                  <label style={s.label}>Beds *</label>
-                  <input
-                    type="number" min="1" max="100" value={numBeds}
-                    onChange={e => { setNumBeds(parseInt(e.target.value) || 1); setErrors({ ...errors, beds: null }); setSchedule(null); }}
-                    style={{ ...s.input, borderColor: errors.beds ? "#ef4444" : "#ddd" }}
-                  />
-                  {errors.beds && <span style={s.errorText}>{errors.beds}</span>}
-                </div>
-              </div>
-
-              <div style={s.formGroup}>
-                <label style={s.label}>
-                  Growing Season (weeks)
-                  <span style={s.labelHint}> — adjust for your climate</span>
-                </label>
-                <input
-                  type="number" min="12" max="52" value={growingSeasonWeeks}
-                  onChange={e => setGrowingSeasonWeeks(parseInt(e.target.value) || 52)}
-                  style={s.input}
-                />
-              </div>
-
-              <button
-                onClick={generateSchedule}
-                disabled={loadingCrops}
-                style={{ ...s.generateBtn, opacity: loadingCrops ? 0.6 : 1 }}
-              >
-                Generate Schedule
-              </button>
-
-              {/* Schedule output */}
-              {schedule && (
-                <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} style={s.scheduleBox}>
-                  <h4 style={s.scheduleTitle}>🗓️ Planting Schedule</h4>
-
-                  <div style={s.timelineList}>
-                    <TimelineRow icon="🌱" label="Sow" date={schedule.traySowDate} moon={schedule.moon?.sow} color="#7FB34D" />
-                    {schedule.transplantDate && (
-                      <TimelineRow icon="🌿" label="Transplant" date={schedule.transplantDate} moon={schedule.moon?.transplant} color="#5A9F6E" />
+                  <div style={s.formGroup}>
+                    <label style={s.label}>Crop *</label>
+                    {loadingCrops ? (
+                      <div style={s.cropLoadingHint}>Loading crops…</div>
+                    ) : (
+                      <select
+                        value={selectedCrop}
+                        onChange={e => { setSelectedCrop(e.target.value); setErrors({ ...errors, crop: null }); }}
+                        style={{ ...s.input, borderColor: errors.crop ? "#ef4444" : "#ddd" }}
+                      >
+                        <option value="">Choose a crop…</option>
+                        {Object.keys(cropDatabase).sort().map(name => (
+                          <option key={name} value={name}>
+                            {cropDatabase[name].emoji} {name}
+                          </option>
+                        ))}
+                      </select>
                     )}
-                    <TimelineRow icon="🌾" label="Harvest begins" date={schedule.harvestStartDate} moon={schedule.moon?.harvest} color="#E6A93C" />
-                    <TimelineRow icon="✅" label="Harvest ends" date={schedule.harvestEndDate} color="#EFA8B8" />
-                    {schedule.bedTurnoverDate && (
-                      <TimelineRow icon="🔄" label="Bed ready" date={schedule.bedTurnoverDate} color="#9B59B6" />
-                    )}
+                    {errors.crop && <span style={s.errorText}>{errors.crop}</span>}
                   </div>
 
-                  <div style={s.yieldBox}>
-                    <YieldStat label="Yield this cycle" value={schedule.yieldPerCycle} />
-                    <YieldStat label="Annual yield" value={schedule.estimatedYield} />
-                    <YieldStat label="Cycles/year" value={schedule.cyclesPerYear} />
-                    <YieldStat label="New sowing every" value={`${schedule.successionInterval} wks`} />
+                  {crop && (
+                    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} style={s.quickInfo}>
+                      <QuickStat label="Weeks to harvest" value={crop.weeksToHarvest} />
+                      <QuickStat label="Yield/bed" value={`${crop.yieldPerBed} ${crop.yieldUnit}`} />
+                      <QuickStat label="Mulch" value={crop.mulch ? "Yes" : "No"} />
+                    </motion.div>
+                  )}
+
+                  <div style={s.formGroup}>
+                    <label style={s.label}>Start Date *</label>
+                    <input
+                      type="date" value={startDate}
+                      onChange={e => { setStartDate(e.target.value); setErrors({ ...errors, date: null }); }}
+                      style={{ ...s.input, borderColor: errors.date ? "#ef4444" : "#ddd" }}
+                    />
+                    {errors.date && <span style={s.errorText}>{errors.date}</span>}
                   </div>
 
-                  <div style={s.seedNote}>
-                    🌰 Order ~{Math.ceil(schedule.totalSeeds * 1.2).toLocaleString()} seeds for this cycle
-                    ({Math.ceil(schedule.totalSeedsForYear * 1.2).toLocaleString()} for the full year)
-                    {schedule.cropData.mulch && " · Mulch required"}
-                  </div>
-
-                  <button
-                    onClick={savePlan}
-                    disabled={saving}
-                    style={{ ...s.saveBtn, opacity: saving ? 0.7 : 1 }}
-                  >
-                    {saving ? "Saving…" : "💾 Save to My Planner"}
+                  <button onClick={goNext} disabled={loadingCrops} style={{ ...s.generateBtn, opacity: loadingCrops ? 0.6 : 1 }}>
+                    Next: Bed & Spacing →
                   </button>
+                </motion.div>
+              )}
+
+              {/* ── Step 1: Bed Dimensions + Spacing ────────────────────── */}
+              {wizardStep === 1 && (
+                <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
+                  <div style={s.wizLabel}>Bed Dimensions</div>
+                  <div style={s.formRow}>
+                    <div style={{ flex: 1 }}>
+                      <label style={s.label}>Length (ft) *</label>
+                      <input
+                        type="number" min="0" step="0.5" value={bedLengthFt}
+                        onChange={e => setBedLengthFt(e.target.value)}
+                        placeholder="e.g. 8" style={{ ...s.input, borderColor: errors.length ? "#ef4444" : "#ddd" }}
+                      />
+                    </div>
+                    <div style={{ flex: 1 }}>
+                      <label style={s.label}>Width (ft) *</label>
+                      <input
+                        type="number" min="0" step="0.5" value={bedWidthFt}
+                        onChange={e => setBedWidthFt(e.target.value)}
+                        placeholder="e.g. 4" style={{ ...s.input, borderColor: errors.width ? "#ef4444" : "#ddd" }}
+                      />
+                    </div>
+                  </div>
+                  <div style={s.formRow}>
+                    <div style={{ flex: 1 }}>
+                      <label style={s.label}># Beds *</label>
+                      <input
+                        type="number" min="1" max="100" value={numBeds}
+                        onChange={e => setNumBeds(parseInt(e.target.value) || 1)}
+                        style={{ ...s.input, borderColor: errors.beds ? "#ef4444" : "#ddd" }}
+                      />
+                    </div>
+                    <div style={{ flex: 1 }}>
+                      <label style={s.label}># Rows/bed *</label>
+                      <input
+                        type="number" min="1" max="20" value={bedRows}
+                        onChange={e => setBedRows(parseInt(e.target.value) || 1)}
+                        style={{ ...s.input, borderColor: errors.rows ? "#ef4444" : "#ddd" }}
+                      />
+                    </div>
+                  </div>
+
+                  {rowCheck?.warning && (
+                    <div style={s.geometryPreviewMuted}>⚠️ {rowCheck.warning}</div>
+                  )}
+                  {!rowCheck && (
+                    <div style={s.rowNote}>Enter dimensions above — spacing options update live.</div>
+                  )}
+
+                  {scenarios && (
+                    <>
+                      <div style={s.wizLabel}>Choose spacing:</div>
+                      {["optimal", "minimum", "maximum"].map(key => {
+                        const sc = scenarios[key];
+                        return (
+                          <div
+                            key={key}
+                            onClick={() => setSpacingChoice(key)}
+                            style={{ ...s.spacingCard, ...(spacingChoice === key ? s.spacingCardOn : {}) }}
+                          >
+                            <div style={s.spacingHdr}>
+                              <div style={s.spacingName}>{sc.label}</div>
+                              <span style={{ ...s.spacingTag, ...(sc.caution ? s.spacingTagCaution : {}) }}>{sc.tag}</span>
+                            </div>
+                            <div style={s.spacingStats}>
+                              <div style={s.spacingStat}><strong>{sc.totalPlants.toLocaleString()}</strong><span>Plants</span></div>
+                              <div style={s.spacingStat}><strong>{sc.yieldEst != null ? `${sc.yieldEst.toLocaleString()} ${crop.yieldUnit}` : "—"}</strong><span>Yield est.</span></div>
+                              <div style={s.spacingStat}><strong>{sc.valueEst != null ? `$${sc.valueEst.toLocaleString()}` : "—"}</strong><span>Value est.</span></div>
+                            </div>
+                            <div style={s.spacingBlurb}>{sc.blurb}</div>
+                          </div>
+                        );
+                      })}
+                    </>
+                  )}
+                  {!scenarios && bedLengthFt && bedWidthFt && bedRows && (
+                    <div style={s.geometryPreviewMuted}>
+                      Can't calculate plant count for this crop's spacing data yet.
+                    </div>
+                  )}
+
+                  <div style={s.stepBtnRow}>
+                    <button onClick={goNext} style={s.generateBtn}>Next: Seedling Strategy →</button>
+                    <button onClick={goBack} style={s.backBtn}>← Back</button>
+                  </div>
+                </motion.div>
+              )}
+
+              {/* ── Step 2: Seedling Strategy ────────────────────────────── */}
+              {wizardStep === 2 && selectedScenario && (
+                <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
+                  <div style={s.stepIntro}>
+                    You have <strong>{selectedScenario.totalPlants.toLocaleString()} plants</strong> planned at <strong>{spacingChoice}</strong> spacing. How are you getting them in the ground?
+                  </div>
+                  {Object.entries(SEEDLING_METHODS).map(([key, m]) => (
+                    <div
+                      key={key}
+                      onClick={() => setSeedlingMethod(key)}
+                      style={{ ...s.methodCard, ...(seedlingMethod === key ? s.methodCardOn : {}) }}
+                    >
+                      <div style={s.spacingHdr}>
+                        <div style={s.spacingName}>{m.label}</div>
+                        <span style={s.spacingTag}>{m.tag}</span>
+                      </div>
+                      <div style={s.methodBlurb}>{m.blurb}</div>
+                      <div style={s.methodMeta}>Cost: {m.cost} · Labor: {m.labor}</div>
+                    </div>
+                  ))}
+                  <div style={s.stepBtnRow}>
+                    <button onClick={goNext} style={s.generateBtn}>Next: Summary →</button>
+                    <button onClick={goBack} style={s.backBtn}>← Back</button>
+                  </div>
+                </motion.div>
+              )}
+
+              {/* ── Step 3: Summary ──────────────────────────────────────── */}
+              {wizardStep === 3 && selectedScenario && timeline && (
+                <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
+                  <div style={s.summaryBox}>
+                    <SummaryRow label="Crop" value={selectedCrop} />
+                    <SummaryRow label="Spacing" value={scenarios[spacingChoice].label} />
+                    <SummaryRow label="Method" value={SEEDLING_METHODS[seedlingMethod].label} />
+                    <SummaryRow label="Total plants" value={selectedScenario.totalPlants.toLocaleString()} />
+                    <SummaryRow label="Yield est." value={selectedScenario.yieldEst != null ? `${selectedScenario.yieldEst.toLocaleString()} ${crop.yieldUnit}` : "—"} highlight />
+                    <SummaryRow label="Value est." value={selectedScenario.valueEst != null ? `$${selectedScenario.valueEst.toLocaleString()}` : "—"} highlight />
+                    <SummaryRow label="First harvest" value={timeline.harvestStartDate.toLocaleDateString()} />
+                    <SummaryRow label="Cost / Labor" value={`${SEEDLING_METHODS[seedlingMethod].cost} / ${SEEDLING_METHODS[seedlingMethod].labor}`} />
+                  </div>
+                  <div style={s.seedNote}>
+                    🌰 Order ~{Math.ceil(selectedScenario.totalPlants * 1.2).toLocaleString()} seeds/plants for this cycle.
+                    {crop.mulch && " Mulch recommended."}
+                  </div>
+                  <div style={s.stepBtnRow}>
+                    <button onClick={goNext} style={s.generateBtn}>Next: Succession →</button>
+                    <button onClick={goBack} style={s.backBtn}>← Back</button>
+                  </div>
+                </motion.div>
+              )}
+
+              {/* ── Step 4: Succession ───────────────────────────────────── */}
+              {wizardStep === 4 && timeline && (
+                <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
+                  <div style={s.wizLabel}>Choose succession interval:</div>
+                  {SUCCESSION_OPTIONS.map(opt => {
+                    let blurb = opt.blurb;
+                    if (!blurb && opt.key === successionChoice && successionDates) {
+                      blurb = `Next sow: ${successionDates.first.toLocaleDateString()}, then ${successionDates.second.toLocaleDateString()}`;
+                    } else if (!blurb) {
+                      const weeksFor = { auto: timeline.successionWeeks, biweekly: 2, monthly: 4 }[opt.key];
+                      blurb = weeksFor ? `Resow every ${weeksFor} wks` : "";
+                    }
+                    return (
+                      <div
+                        key={opt.key}
+                        onClick={() => setSuccessionChoice(opt.key)}
+                        style={{ ...s.succCard, ...(successionChoice === opt.key ? s.succCardOn : {}) }}
+                      >
+                        <div style={s.succLabel}>{opt.label}</div>
+                        <div style={s.succBlurb}>{blurb}</div>
+                      </div>
+                    );
+                  })}
+
+                  <button onClick={savePlan} disabled={saving} style={{ ...s.saveBtn, opacity: saving ? 0.7 : 1 }}>
+                    {saving ? "Saving…" : "✓ Save Planting"}
+                  </button>
+                  <button onClick={goBack} style={s.backBtn}>← Back</button>
                 </motion.div>
               )}
             </motion.div>
@@ -483,7 +766,11 @@ function ActiveCropCard({ crop, index, cropDatabase }) {
         <div style={s.cropCardInfo}>
           <div style={s.cropName}>{crop.cropName}</div>
           {crop.numBeds && (
-            <div style={s.cropMeta}>{crop.numBeds} bed{crop.numBeds > 1 ? "s" : ""}</div>
+            <div style={s.cropMeta}>
+              {crop.numBeds} bed{crop.numBeds > 1 ? "s" : ""}
+              {crop.bedLengthFt && crop.bedWidthFt ? ` · ${crop.bedLengthFt}×${crop.bedWidthFt}ft` : ""}
+              {crop.plantsPerBed ? ` · ${crop.plantsPerBed.toLocaleString()} plants/bed` : ""}
+            </div>
           )}
         </div>
         {daysLeft !== null && daysLeft <= 0 ? (
@@ -514,19 +801,13 @@ function ActiveCropCard({ crop, index, cropDatabase }) {
 }
 
 // ── Small helpers ─────────────────────────────────────────────────────────────
-function TimelineRow({ icon, label, date, color, moon }) {
+const WIZARD_TITLES = ["Plan a Crop", "Bed & Spacing", "Seedling Strategy", "Summary", "Succession"];
+
+function SummaryRow({ label, value, highlight }) {
   return (
-    <div style={s.timelineRow}>
-      <div style={{ ...s.timelineDot, background: color }}>{icon}</div>
-      <div style={s.timelineRowContent}>
-        <span style={s.timelineLabel}>{label}</span>
-        <span style={s.timelineDate}>{date}</span>
-        {moon && (
-          <span style={{ ...s.moonTag, color: moon.color }}>
-            {moon.emoji} {moon.name}
-          </span>
-        )}
-      </div>
+    <div style={s.summaryRow}>
+      <span style={s.summaryLabel}>{label}</span>
+      <span style={{ ...s.summaryValue, ...(highlight ? s.summaryValueHi : {}) }}>{value}</span>
     </div>
   );
 }
@@ -536,15 +817,6 @@ function QuickStat({ label, value }) {
     <div style={s.quickStat}>
       <div style={s.quickStatVal}>{value}</div>
       <div style={s.quickStatLabel}>{label}</div>
-    </div>
-  );
-}
-
-function YieldStat({ label, value }) {
-  return (
-    <div style={s.yieldStat}>
-      <div style={s.yieldStatVal}>{value}</div>
-      <div style={s.yieldStatLabel}>{label}</div>
     </div>
   );
 }
@@ -647,6 +919,14 @@ const s = {
   formRow: { display: "flex", gap: "0.75rem", marginBottom: "0.75rem" },
   label: { display: "block", fontSize: "0.88rem", fontWeight: "600", color: "var(--ink-black)", marginBottom: "0.4rem" },
   labelHint: { fontWeight: 400, color: "#999", fontSize: "0.82rem" },
+  geometryPreview: {
+    background: "#F0F9F4", border: "1px solid var(--soil-green)", borderRadius: "8px",
+    padding: "0.6rem 0.85rem", marginBottom: "0.85rem", fontSize: "0.85rem", color: "var(--ink-black)"
+  },
+  geometryPreviewMuted: {
+    background: "#fafafa", border: "1px solid #eee", borderRadius: "8px",
+    padding: "0.6rem 0.85rem", marginBottom: "0.85rem", fontSize: "0.8rem", color: "#888"
+  },
   input: {
     width: "100%", padding: "0.7rem 0.75rem", fontSize: "0.95rem",
     border: "1px solid #ddd", borderRadius: "8px", boxSizing: "border-box",
@@ -670,32 +950,68 @@ const s = {
     fontSize: "1rem", fontWeight: "600", cursor: "pointer", marginBottom: "1rem"
   },
 
-  // Schedule
-  scheduleBox: {
-    background: "white", borderRadius: "12px",
-    border: "1px solid #e5e7eb", padding: "1.25rem"
+  // Wizard chrome
+  dragHandle: { width: 36, height: 4, background: "#ddd", borderRadius: 4, margin: "0 auto 0.75rem" },
+  stepDots:   { display: "flex", gap: 6, justifyContent: "center", marginBottom: "1.1rem" },
+  stepDot:    { width: 6, height: 6, borderRadius: "50%", background: "#e0ddd4" },
+  stepDotOn:  { background: "var(--soil-green)", width: 18, borderRadius: 4 },
+  wizLabel:   { fontSize: "0.78rem", fontWeight: 700, color: "var(--ink-black)", margin: "0.9rem 0 0.5rem" },
+  rowNote:    { fontSize: "0.8rem", color: "#999", background: "#fafafa", borderRadius: 8, padding: "0.6rem 0.8rem", marginBottom: "0.75rem" },
+  stepIntro:  { fontSize: "0.85rem", color: "#666", lineHeight: 1.5, marginBottom: "0.9rem" },
+  stepBtnRow: { display: "flex", flexDirection: "column", gap: "0.5rem", marginTop: "0.5rem" },
+  backBtn: {
+    width: "100%", padding: "0.75rem", background: "none",
+    color: "#666", border: "1px solid #ddd", borderRadius: "10px",
+    fontSize: "0.92rem", fontWeight: "600", cursor: "pointer"
   },
-  scheduleTitle: { margin: "0 0 1rem", fontSize: "1rem", color: "var(--ink-black)" },
-  timelineList: { display: "flex", flexDirection: "column", gap: "0.6rem", marginBottom: "1rem" },
-  timelineRow: { display: "flex", alignItems: "flex-start", gap: "0.75rem" },
-  timelineDot: {
-    width: "32px", height: "32px", borderRadius: "50%",
-    display: "flex", alignItems: "center", justifyContent: "center",
-    fontSize: "1rem", flexShrink: 0
-  },
-  timelineRowContent: { display: "flex", flexWrap: "wrap", alignItems: "center", gap: "0.4rem", paddingTop: "5px" },
-  timelineLabel: { fontWeight: "600", fontSize: "0.88rem", color: "var(--ink-black)" },
-  timelineDate: { fontSize: "0.85rem", color: "var(--soil-green)", fontWeight: "600" },
-  moonTag: { fontSize: "0.75rem", fontStyle: "italic" },
 
-  yieldBox: {
-    display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(90px, 1fr))",
-    gap: "0.5rem", background: "#f0f9f4", borderRadius: "8px",
-    padding: "0.75rem", marginBottom: "0.75rem"
+  // Spacing scenario cards
+  spacingCard: {
+    border: "1px solid #e5e7eb", borderRadius: "12px", padding: "0.9rem 1rem",
+    marginBottom: "0.7rem", cursor: "pointer", background: "white"
   },
-  yieldStat: { textAlign: "center" },
-  yieldStatVal: { fontWeight: "700", fontSize: "0.9rem", color: "var(--soil-green)" },
-  yieldStatLabel: { fontSize: "0.72rem", color: "#888", marginTop: "2px" },
+  spacingCardOn: { border: "2px solid var(--soil-green)", background: "#F7FBF4" },
+  spacingHdr: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.5rem" },
+  spacingName: { fontWeight: 700, fontSize: "0.92rem", color: "var(--ink-black)" },
+  spacingTag: {
+    fontSize: "0.68rem", fontWeight: 700, color: "var(--soil-green)",
+    background: "#E8F5E0", padding: "0.15rem 0.5rem", borderRadius: 20
+  },
+  spacingTagCaution: { color: "#B45309", background: "#FEF3C7" },
+  spacingStats: { display: "flex", gap: "1.2rem", marginBottom: "0.4rem" },
+  spacingStat: { display: "flex", flexDirection: "column", fontSize: "0.7rem", color: "#888" },
+  spacingBlurb: { fontSize: "0.78rem", color: "#666" },
+
+  // Seedling method cards
+  methodCard: {
+    border: "1px solid #e5e7eb", borderRadius: "12px", padding: "0.9rem 1rem",
+    marginBottom: "0.7rem", cursor: "pointer", background: "white"
+  },
+  methodCardOn: { border: "2px solid var(--soil-green)", background: "#F7FBF4" },
+  methodBlurb: { fontSize: "0.82rem", color: "#555", marginBottom: "0.35rem" },
+  methodMeta: { fontSize: "0.74rem", color: "#999" },
+
+  // Summary
+  summaryBox: {
+    background: "white", border: "1px solid #e5e7eb", borderRadius: "12px",
+    padding: "0.4rem 1rem", marginBottom: "0.9rem"
+  },
+  summaryRow: {
+    display: "flex", justifyContent: "space-between", alignItems: "center",
+    padding: "0.55rem 0", borderBottom: "1px solid #f0f0f0", fontSize: "0.85rem"
+  },
+  summaryLabel: { color: "#888" },
+  summaryValue: { fontWeight: 600, color: "var(--ink-black)" },
+  summaryValueHi: { color: "var(--soil-green)", fontWeight: 700 },
+
+  // Succession cards
+  succCard: {
+    border: "1px solid #e5e7eb", borderRadius: "12px", padding: "0.8rem 1rem",
+    marginBottom: "0.6rem", cursor: "pointer", background: "white"
+  },
+  succCardOn: { border: "2px solid var(--soil-green)", background: "#F7FBF4" },
+  succLabel: { fontWeight: 700, fontSize: "0.88rem", color: "var(--ink-black)" },
+  succBlurb: { fontSize: "0.78rem", color: "#888", marginTop: "0.2rem" },
 
   seedNote: {
     fontSize: "0.82rem", color: "#666", background: "#fffbeb",
@@ -706,6 +1022,6 @@ const s = {
   saveBtn: {
     width: "100%", padding: "0.85rem", background: "var(--deep-leaf, #2d5a27)",
     color: "white", border: "none", borderRadius: "10px",
-    fontSize: "1rem", fontWeight: "600", cursor: "pointer"
+    fontSize: "1rem", fontWeight: "600", cursor: "pointer", marginBottom: "0.5rem"
   },
 };
