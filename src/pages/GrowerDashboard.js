@@ -7,6 +7,27 @@ import {
 import { onAuthStateChanged } from "firebase/auth";
 import { motion } from "framer-motion";
 import CropPlanner from "../components/CropPlanner";
+import WeatherWidget from "../components/WeatherWidget";
+
+// ── Mobile detection ─────────────────────────────────────────────────────────
+// Everything in this file is inline styles (no CSS media queries available),
+// so responsive layout is driven by this hook instead. Breakpoint matches
+// common phone/small-tablet width.
+function useIsMobile(breakpoint = 768) {
+  const [isMobile, setIsMobile] = useState(
+    typeof window !== "undefined" ? window.innerWidth <= breakpoint : false
+  );
+  useEffect(() => {
+    const mql = window.matchMedia(`(max-width: ${breakpoint}px)`);
+    const handler = (e) => setIsMobile(e.matches);
+    mql.addEventListener ? mql.addEventListener("change", handler) : mql.addListener(handler);
+    setIsMobile(mql.matches);
+    return () => {
+      mql.removeEventListener ? mql.removeEventListener("change", handler) : mql.removeListener(handler);
+    };
+  }, [breakpoint]);
+  return isMobile;
+}
 
 // ── Palette ───────────────────────────────────────────────────────────────────
 const C = {
@@ -42,10 +63,27 @@ const NAV = [
 ];
 
 // ── Sidebar ───────────────────────────────────────────────────────────────────
-function Sidebar({ active, setActive, userData }) {
+function Sidebar({ active, setActive, userData, isMobile }) {
   const island = typeof userData?.location === "string"
     ? userData.location
     : userData?.location?.island || "Location not set";
+
+  if (isMobile) {
+    return (
+      <nav style={ss.bottomBar}>
+        {NAV.map(n => (
+          <button
+            key={n.id}
+            onClick={() => setActive(n.id)}
+            style={{ ...ss.bottomItem, ...(active === n.id ? ss.bottomItemOn : {}) }}
+          >
+            <span style={ss.bottomIcon}>{n.icon}</span>
+            <span style={ss.bottomLabel}>{n.label === "Input Library" ? "Inputs" : n.label === "Crop Doctor" ? "Doctor" : n.label}</span>
+          </button>
+        ))}
+      </nav>
+    );
+  }
 
   return (
     <aside style={ss.aside}>
@@ -89,6 +127,13 @@ const ss = {
   farmCard:   { margin: "0.85rem", background: "rgba(0,0,0,0.22)", borderRadius: 8, padding: "0.7rem 0.9rem" },
   farmName:   { color: "#FFF", fontWeight: 600, fontSize: "0.82rem" },
   farmDetail: { color: C.sidebarText, fontSize: "0.72rem", marginTop: 3, lineHeight: 1.45, opacity: 0.8 },
+
+  // Mobile bottom tab bar
+  bottomBar:    { position: "fixed", bottom: 0, left: 0, right: 0, height: 60, background: C.sidebarBg, display: "flex", zIndex: 900, boxShadow: "0 -2px 8px rgba(0,0,0,0.15)", paddingBottom: "env(safe-area-inset-bottom, 0px)" },
+  bottomItem:   { flex: 1, minWidth: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 2, background: "none", border: "none", color: C.sidebarText, cursor: "pointer", padding: "0.3rem 0.1rem" },
+  bottomItemOn: { color: "#FFF" },
+  bottomIcon:   { fontSize: "1.1rem" },
+  bottomLabel:  { fontSize: "0.62rem", fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: "100%" },
 };
 
 // ── Shared atoms ──────────────────────────────────────────────────────────────
@@ -118,6 +163,12 @@ function Pill({ children, color = C.greenBadge }) {
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+// Same helper Dashboard.jsx used — WeatherWidget expects a { island } object,
+// but userData.location can be stored as either a plain string or an object.
+function normalizeLocation(location) {
+  return typeof location === "string" ? { island: location } : (location || null);
+}
+
 function daysUntil(dateRaw) {
   if (!dateRaw) return null;
   const d = dateRaw?.toDate ? dateRaw.toDate() : new Date(dateRaw);
@@ -137,36 +188,6 @@ function harvestLabel(days) {
 // Tomorrow.io-backed, 30-min server cache) — same endpoint WeatherWidget.jsx
 // already uses. No mock data.
 
-const WEATHER_FUNCTION_URL = "https://us-central1-soil-sista.cloudfunctions.net/getWeather";
-
-function useHomeWeather(island) {
-  const [weather, setWeather] = useState(null);
-  const [status,  setStatus]  = useState("loading"); // loading | ready | no_location | error
-
-  useEffect(() => {
-    if (!island) { setStatus("no_location"); return; }
-    let cancelled = false;
-    setStatus("loading");
-    (async () => {
-      try {
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 12000);
-        const res = await fetch(`${WEATHER_FUNCTION_URL}?island=${encodeURIComponent(island)}`, { signal: controller.signal });
-        clearTimeout(timeout);
-        if (!res.ok) throw new Error(`Weather service error ${res.status}`);
-        const data = await res.json();
-        if (!cancelled) { setWeather(data); setStatus("ready"); }
-      } catch (e) {
-        console.error("Home weather fetch error:", e);
-        if (!cancelled) setStatus("error");
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [island]);
-
-  return { weather, status };
-}
-
 const QA_BUTTONS = [
   { id: "planting",    icon: "🌱", label: "Add Planting", primary: true  },
   { id: "harvest",     icon: "🌾", label: "Log Harvest",  primary: false },
@@ -178,11 +199,7 @@ const QA_BUTTONS = [
   { id: "diagnose",    icon: "🩺", label: "Diagnose",     primary: false },
 ];
 
-function HomeSection({ userData, activities, userId, setSection, bumpAddPlanting, openLogModal }) {
-  const island = typeof userData?.location === "string"
-    ? userData.location
-    : userData?.location?.island || null;
-  const { weather, status: wxStatus } = useHomeWeather(island);
+function HomeSection({ userData, activities, userId, setSection, bumpAddPlanting, openLogModal, isMobile }) {
 
   // ── Derive beds from crop_plan activities ─────────────────────────────────
   const beds = activities
@@ -205,7 +222,7 @@ function HomeSection({ userData, activities, userId, setSection, bumpAddPlanting
 
   // ── Today's tasks: reminders + upcoming crop events ───────────────────────
   const today   = new Date(); today.setHours(0, 0, 0, 0);
-//  const in14    = new Date(today.getTime() + 14 * 864e5);
+  const in14    = new Date(today.getTime() + 14 * 864e5);
 
   const reminders = activities
     .filter(a => a.type === "reminder" && a.status !== "completed")
@@ -229,47 +246,13 @@ function HomeSection({ userData, activities, userId, setSection, bumpAddPlanting
 
   return (
     <div>
-      {/* 7-Day Forecast */}
-      <Card style={{ marginBottom: "1.1rem" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.9rem" }}>
-          <h3 style={{ margin: 0, fontSize: "0.95rem" }}>🌤️ 7-Day Forecast</h3>
-          <div style={{ display: "flex", gap: 6 }}>
-            <button style={btnTab}>Daily</button>
-            <button style={btnTabGhost}>At a Glance</button>
-          </div>
-        </div>
-        <div style={{ display: "flex", gap: 8, overflowX: "auto" }}>
-          {wxStatus === "loading" && (
-            <div style={{ padding: "0.9rem", color: C.textMuted, fontSize: "0.85rem" }}>Loading forecast…</div>
-          )}
-          {wxStatus === "no_location" && (
-            <div style={{ padding: "0.9rem", color: C.textMuted, fontSize: "0.85rem" }}>
-              No location set. <a href="/profile" style={{ color: C.green, fontWeight: 600 }}>Add your island</a> to see forecast.
-            </div>
-          )}
-          {wxStatus === "error" && (
-            <div style={{ padding: "0.9rem", color: C.red, fontSize: "0.85rem" }}>Weather temporarily unavailable.</div>
-          )}
-          {wxStatus === "ready" && weather && [{ isCurrent: true, day: "TODAY", emoji: weather.current.emoji, high: weather.current.temp, low: weather.current.temp, rain: weather.current.rainfall }, ...weather.forecast.slice(1)].map((d, i) => (
-            <div key={i} style={{ ...fDay, ...(i === 0 ? fDayOn : {}) }}>
-              <div style={{ fontSize: "0.7rem", fontWeight: 700, color: i === 0 ? "#fff" : C.textMuted }}>{d.isCurrent ? "TODAY" : d.day?.toUpperCase()}</div>
-              <div style={{ fontSize: "1.4rem", margin: "0.25rem 0" }}>{d.emoji}</div>
-              <div style={{ fontWeight: 800, color: i === 0 ? "#fff" : C.text }}>{d.high}°</div>
-              <div style={{ fontSize: "0.7rem", color: i === 0 ? "rgba(255,255,255,0.7)" : C.textMuted }}>{d.low}° lo</div>
-              {d.rain > 5 && <div style={{ fontSize: "0.62rem", color: i === 0 ? "#FFD700" : C.orange, fontWeight: 700, marginTop: 3 }}>Rain</div>}
-            </div>
-          ))}
-        </div>
-      </Card>
-
-      {weather?.stale && (
-        <div style={{ background: C.orangeLight, border: "1px solid #FCD34D", borderRadius: 8, padding: "0.5rem 0.9rem", marginBottom: "1.1rem", fontSize: "0.8rem", color: "#92400E" }}>
-          ⚠️ Showing cached weather — live data temporarily unavailable.
-        </div>
-      )}
+      {/* Weather — same WeatherWidget + normalizeLocation call Dashboard.jsx used */}
+      <div style={{ marginBottom: "1.1rem" }}>
+        <WeatherWidget location={normalizeLocation(userData?.location)} userData={userData} />
+      </div>
 
       {/* Pressure cards */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: "1rem", marginBottom: "1.1rem" }}>
+      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(3,1fr)", gap: "1rem", marginBottom: "1.1rem" }}>
         <Card style={{ borderLeft: `4px solid ${C.red}`, background: C.redLight }}>
           <div style={pressLabel("#7F1D1D")}>🐛 PEST PRESSURE</div>
           <div style={pressVal(C.red)}>{pestLevel}</div>
@@ -294,7 +277,7 @@ function HomeSection({ userData, activities, userId, setSection, bumpAddPlanting
       </div>
 
       {/* Stats row */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: "1rem", marginBottom: "1.1rem" }}>
+      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "repeat(2,1fr)" : "repeat(4,1fr)", gap: "1rem", marginBottom: "1.1rem" }}>
         {[
           { v: beds.length || userData?.stats?.cropsPlanted || 0, l: "Active Beds"   },
           { v: `${userData?.stats?.cropsHarvested || 0}`,          l: "Harvested"     },
@@ -320,7 +303,7 @@ function HomeSection({ userData, activities, userId, setSection, bumpAddPlanting
       {/* Quick Actions */}
       <Card style={{ marginBottom: "1.1rem" }}>
         <h3 style={{ margin: "0 0 0.9rem", fontSize: "0.95rem" }}>⚡ Quick Actions</h3>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: "0.65rem" }}>
+        <div style={{ display: "grid", gridTemplateColumns: isMobile ? "repeat(3,1fr)" : "repeat(4,1fr)", gap: "0.65rem" }}>
           {QA_BUTTONS.map((q, i) => (
             <button
               key={i}
@@ -339,7 +322,7 @@ function HomeSection({ userData, activities, userId, setSection, bumpAddPlanting
       </Card>
 
       {/* Growing Now + Today's Tasks */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1.1rem", marginBottom: "1.1rem" }}>
+      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: "1.1rem", marginBottom: "1.1rem" }}>
         <Card>
           <h3 style={{ margin: "0 0 0.9rem", fontSize: "0.95rem" }}>🌿 Growing Now</h3>
           {beds.length > 0 ? beds.map((b, i) => (
@@ -409,10 +392,7 @@ function HomeSection({ userData, activities, userId, setSection, bumpAddPlanting
   );
 }
 
-const btnTab      = { background: C.green, color: "#fff", border: "none", borderRadius: 6, padding: "0.28rem 0.7rem", fontSize: "0.8rem", cursor: "pointer", fontWeight: 600 };
-const btnTabGhost = { background: "none", color: C.textMuted, border: `1px solid ${C.border}`, borderRadius: 6, padding: "0.28rem 0.7rem", fontSize: "0.8rem", cursor: "pointer" };
-const fDay        = { minWidth: 68, textAlign: "center", padding: "0.6rem 0.45rem", borderRadius: 10, flexShrink: 0 };
-const fDayOn      = { background: C.green, color: "#fff" };
+
 const pressLabel  = c => ({ fontSize: "0.7rem", fontWeight: 700, color: c, letterSpacing: "0.04em", marginBottom: 4 });
 const pressVal    = c => ({ fontSize: "1.45rem", fontWeight: 800, color: c, margin: "0.2rem 0" });
 const pressNote   = c => ({ fontSize: "0.76rem", color: c, lineHeight: 1.45 });
@@ -624,7 +604,7 @@ const flowOptFull = { width: "100%", padding: "0.7rem 0.9rem", borderRadius: 8, 
 // Beds are derived from activities where type === "crop_plan" && status === "planned"
 // Seedling nursery and season rotation are derived from the same source.
 
-function FarmSection({ userData, activities, userId, addPlantingSignal, bumpAddPlanting }) {
+function FarmSection({ userData, activities, userId, addPlantingSignal, bumpAddPlanting, isMobile }) {
   const island = typeof userData?.location === "string"
     ? userData.location
     : userData?.location?.island || "—";
@@ -673,7 +653,7 @@ function FarmSection({ userData, activities, userId, addPlantingSignal, bumpAddP
         <CropPlanner userData={{ ...userData, userId }} autoOpenSignal={addPlantingSignal} />
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1.1rem" }}>
+      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: "1.1rem" }}>
         {/* Seedling nursery */}
         <Card>
           <h3 style={{ margin: "0 0 0.9rem", fontSize: "0.95rem" }}>🌱 Seedling Nursery</h3>
@@ -800,7 +780,8 @@ function MarketSection({ userData, activities }) {
         )}
 
         {mktStatus === "ready" && (
-        <table style={{ width: "100%", borderCollapse: "collapse" }}>
+        <div style={{ overflowX: "auto" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 380 }}>
           <thead>
             <tr style={{ borderBottom: `2px solid ${C.border}` }}>
               <th style={tH}>PRODUCE</th>
@@ -838,6 +819,7 @@ function MarketSection({ userData, activities }) {
             })}
           </tbody>
         </table>
+        </div>
         )}
       </Card>
     </div>
@@ -997,7 +979,7 @@ const GUIDED_CHOOSER = {
   ],
 };
 
-function CropDoctorSection({ userData, activities, userId, refetchActivities }) {
+function CropDoctorSection({ userData, activities, userId, refetchActivities, isMobile }) {
   const [modal,      setModal]      = useState(null);   // pest | disease | nutrient | guided
   const [activeType, setActiveType] = useState(null);   // resolved tree once known
   const [step,       setStep]       = useState(0);
@@ -1226,7 +1208,7 @@ function useInputLibrary() {
   return { inputs, rules, status, refetch: () => setReload(r => r + 1) };
 }
 
-function InputLibrarySection({ userId }) {
+function InputLibrarySection({ userId, isMobile }) {
   const { inputs, rules, status, refetch } = useInputLibrary();
   const [sel, setSel] = useState([]);
   const [showAdd, setShowAdd] = useState(false);
@@ -1272,7 +1254,7 @@ function InputLibrarySection({ userId }) {
       {status === "error"   && <p style={{ color: C.red, fontSize: "0.85rem" }}>Couldn't load inputs. Try again shortly.</p>}
 
       {status === "ready" && (
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: "0.9rem", marginBottom: "1.4rem" }}>
+      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "repeat(2,1fr)" : "repeat(3,1fr)", gap: "0.9rem", marginBottom: "1.4rem" }}>
         {inputs.length === 0 && (
           <p style={{ color: C.textMuted, fontSize: "0.85rem", gridColumn: "1 / -1" }}>
             No products yet. Add your first one below.
@@ -1425,7 +1407,7 @@ function HistorySection({ activities }) {
           </button>
         ))}
       </div>
-      <div style={{ display: "flex", gap: "0.6rem", marginBottom: "1.3rem" }}>
+      <div style={{ display: "flex", gap: "0.6rem", marginBottom: "1.3rem", flexWrap: "wrap" }}>
         {["📤 Export CSV", "📤 Export PDF", "✉️ Email Report"].map((b, i) => (
           <button key={i} style={{ background: "none", border: `1px solid ${C.border}`, borderRadius: 6, padding: "0.35rem 0.7rem", fontSize: "0.78rem", cursor: "pointer", color: C.textMuted }}>{b}</button>
         ))}
@@ -1472,7 +1454,7 @@ const filtOn = { background: C.green, color: "#fff", border: `1px solid ${C.gree
 // Fields mirror what onUserCreate seeds and Profile.jsx writes:
 // name, email, planType, farmName, location.island, soilType, irrigation, farmSize
 
-function ProfileSection({ userData }) {
+function ProfileSection({ userData, isMobile }) {
   const u      = userData || {};
   const island = typeof u.location === "string"
     ? u.location
@@ -1485,7 +1467,7 @@ function ProfileSection({ userData }) {
   return (
     <div>
       <SectionHead title="👤 Profile & Settings" />
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1.1rem" }}>
+      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: "1.1rem" }}>
         <Card>
           <h3 style={{ margin: "0 0 1.1rem", fontSize: "0.95rem", fontWeight: 700 }}>Personal Info</h3>
           {[
@@ -1534,6 +1516,7 @@ function ProfileSection({ userData }) {
 
 // ── ROOT ──────────────────────────────────────────────────────────────────────
 export default function GrowerDashboard() {
+  const isMobile = useIsMobile();
   const [section,    setSection]    = useState("home");
   const [addPlantingSignal, setAddPlantingSignal] = useState(0);
   const [logModalType, setLogModalType] = useState(null); // harvest|sale|spray|observation|amendment|restock
@@ -1613,16 +1596,22 @@ export default function GrowerDashboard() {
   }
 
   const shared = {
-    userData, activities, userId, setSection,
+    userData, activities, userId, setSection, isMobile,
     bumpAddPlanting: () => setAddPlantingSignal(s => s + 1),
     openLogModal: (type) => setLogModalType(type),
     refetchActivities,
   };
 
   return (
-    <div style={{ display: "flex", height: "100vh", overflow: "hidden", fontFamily: "'Inter',sans-serif" }}>
-      <Sidebar active={section} setActive={setSection} userData={userData} />
-      <main style={{ flex: 1, overflowY: "auto", background: C.cream, padding: "1.75rem 2rem" }}>
+    <div style={{ display: "flex", flexDirection: isMobile ? "column" : "row", height: "100vh", overflow: "hidden", fontFamily: "'Inter',sans-serif" }}>
+      <Sidebar active={section} setActive={setSection} userData={userData} isMobile={isMobile} />
+      <main style={{
+        flex: 1,
+        overflowY: "auto",
+        background: C.cream,
+        padding: isMobile ? "1rem 1rem 5rem" : "1.75rem 2rem",
+        width: "100%",
+      }}>
         <motion.div
           key={section}
           initial={{ opacity: 0, y: 6 }}
@@ -1633,7 +1622,7 @@ export default function GrowerDashboard() {
           {section === "farm"    && <FarmSection      {...shared} addPlantingSignal={addPlantingSignal} />}
           {section === "market"  && <MarketSection    {...shared} />}
           {section === "doctor"  && <CropDoctorSection {...shared} />}
-          {section === "inputs"  && <InputLibrarySection userId={userId} />}
+          {section === "inputs"  && <InputLibrarySection userId={userId} isMobile={isMobile} />}
           {section === "history" && <HistorySection   {...shared} />}
           {section === "profile" && <ProfileSection   {...shared} />}
         </motion.div>
