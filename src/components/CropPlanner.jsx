@@ -178,6 +178,11 @@ export default function CropPlanner({ userData, autoOpenSignal }) {
   // exists. Shows "—" rather than a made-up number when it doesn't.
   const [marketPrices, setMarketPrices] = useState([]);
 
+  useEffect(() => {
+    if (userData?.growingSeasonWeeks)) {
+      setGrowingSeasonWeeks(userData.growingSeasonWeeks); 
+    }
+  }, [userData]); 
   
   useEffect(() => {
     (async () => {
