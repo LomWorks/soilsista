@@ -169,7 +169,7 @@ export default function CropPlanner({ userData, autoOpenSignal }) {
   const [spacingChoice, setSpacingChoice] = useState("optimal");
   const [seedlingMethod, setSeedlingMethod] = useState("buy");
   const [successionChoice, setSuccessionChoice] = useState("none");
-  const [growingSeasonWeeks, setGrowingSeasonWeeks] = useState(52);
+  const growingSeasonWeeks = 52; // no UI control for this yet — default year-round estimate
   const [saving, setSaving] = useState(false);
   const [errors, setErrors] = useState({});
   const [moonMode, setMoonMode] = useState(false);
