@@ -5,7 +5,7 @@ import {
   getDocs, addDoc, serverTimestamp,
 } from "firebase/firestore";
 import { onAuthStateChanged } from "firebase/auth";
-import { motion } from "framer-motion";
+import { motion, AnimatePresence } from "framer-motion";
 import CropPlanner from "../components/CropPlanner";
 import WeatherWidget from "../components/WeatherWidget";
 
@@ -13,20 +13,32 @@ import WeatherWidget from "../components/WeatherWidget";
 // Everything in this file is inline styles (no CSS media queries available),
 // so responsive layout is driven by this hook instead. Breakpoint matches
 // common phone/small-tablet width.
-function useIsMobile(breakpoint = 768) {
-  const [isMobile, setIsMobile] = useState(
-    typeof window !== "undefined" ? window.innerWidth <= breakpoint : false
-  );
+function useViewport() {
+  const getTier = () => {
+    if (typeof window === "undefined") return "desktop";
+    const w = window.innerWidth;
+    if (w <= 768) return "mobile";
+    if (w <= 1080) return "tablet";
+    return "desktop";
+  };
+  const [tier, setTier] = useState(getTier);
+
   useEffect(() => {
-    const mql = window.matchMedia(`(max-width: ${breakpoint}px)`);
-    const handler = (e) => setIsMobile(e.matches);
-    mql.addEventListener ? mql.addEventListener("change", handler) : mql.addListener(handler);
-    setIsMobile(mql.matches);
+    const mqlMobile = window.matchMedia("(max-width: 768px)");
+    const mqlTablet = window.matchMedia("(max-width: 1080px)");
+    const handler = () => setTier(getTier());
+    [mqlMobile, mqlTablet].forEach(mql =>
+      mql.addEventListener ? mql.addEventListener("change", handler) : mql.addListener(handler)
+    );
+    handler();
     return () => {
-      mql.removeEventListener ? mql.removeEventListener("change", handler) : mql.removeListener(handler);
+      [mqlMobile, mqlTablet].forEach(mql =>
+        mql.removeEventListener ? mql.removeEventListener("change", handler) : mql.removeListener(handler)
+      );
     };
-  }, [breakpoint]);
-  return isMobile;
+  }, []);
+
+  return tier; // "mobile" | "tablet" | "desktop"
 }
 
 // ── Palette ───────────────────────────────────────────────────────────────────
@@ -63,25 +75,92 @@ const NAV = [
 ];
 
 // ── Sidebar ───────────────────────────────────────────────────────────────────
-function Sidebar({ active, setActive, userData, isMobile }) {
+function Sidebar({ active, setActive, userData, viewport }) {
+  const [drawerOpen, setDrawerOpen] = useState(false);
   const island = typeof userData?.location === "string"
     ? userData.location
     : userData?.location?.island || "Location not set";
+  const activeLabel = NAV.find(n => n.id === active)?.label || "Home";
 
-  if (isMobile) {
+  if (viewport === "mobile") {
     return (
-      <nav style={ss.bottomBar}>
-        {NAV.map(n => (
-          <button
-            key={n.id}
-            onClick={() => setActive(n.id)}
-            style={{ ...ss.bottomItem, ...(active === n.id ? ss.bottomItemOn : {}) }}
-          >
-            <span style={ss.bottomIcon}>{n.icon}</span>
-            <span style={ss.bottomLabel}>{n.label === "Input Library" ? "Inputs" : n.label === "Crop Doctor" ? "Doctor" : n.label}</span>
+      <>
+        <div style={ss.topBar}>
+          <button style={ss.hamburgerBtn} onClick={() => setDrawerOpen(true)} aria-label="Open menu">
+            <span style={ss.hamburgerLine} />
+            <span style={ss.hamburgerLine} />
+            <span style={ss.hamburgerLine} />
           </button>
-        ))}
-      </nav>
+          <div style={ss.topBarTitle}>{activeLabel}</div>
+          <div style={{ width: 32 }} />
+        </div>
+
+        <AnimatePresence>
+          {drawerOpen && (
+            <>
+              <motion.div
+                key="drawer-backdrop"
+                initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+                style={ss.drawerBackdrop}
+                onClick={() => setDrawerOpen(false)}
+              />
+              <motion.aside
+                key="drawer"
+                initial={{ x: "-100%" }} animate={{ x: 0 }} exit={{ x: "-100%" }}
+                transition={{ type: "tween", duration: 0.2 }}
+                style={ss.drawer}
+              >
+                <div style={ss.header}>
+                  <div style={ss.logo}>Soil Sista</div>
+                  <div style={ss.sub}>Grower Assistant</div>
+                </div>
+                <nav style={ss.nav}>
+                  {NAV.map(n => (
+                    <button
+                      key={n.id}
+                      onClick={() => { setActive(n.id); setDrawerOpen(false); }}
+                      style={{ ...ss.item, ...(active === n.id ? ss.itemOn : {}) }}
+                    >
+                      <span style={ss.icon}>{n.icon}</span>
+                      {n.label}
+                    </button>
+                  ))}
+                </nav>
+                {userData && (
+                  <div style={ss.farmCard}>
+                    <div style={ss.farmName}>{userData.farmName || "My Farm"}</div>
+                    <div style={ss.farmDetail}>
+                      {island} · {userData.farmSize || "—"} · {userData.farmingType || "mixed veg"}
+                    </div>
+                  </div>
+                )}
+              </motion.aside>
+            </>
+          )}
+        </AnimatePresence>
+      </>
+    );
+  }
+
+  // Tablet tier: collapsed icon-only rail — same nav, no jump straight to a
+  // full drawer just because the sidebar's text labels no longer fit.
+  if (viewport === "tablet") {
+    return (
+      <aside style={ss.rail}>
+        <div style={ss.railHeader}>🌱</div>
+        <nav style={ss.railNav}>
+          {NAV.map(n => (
+            <button
+              key={n.id}
+              onClick={() => setActive(n.id)}
+              title={n.label}
+              style={{ ...ss.railItem, ...(active === n.id ? ss.railItemOn : {}) }}
+            >
+              <span style={ss.railIcon}>{n.icon}</span>
+            </button>
+          ))}
+        </nav>
+      </aside>
     );
   }
 
@@ -128,12 +207,21 @@ const ss = {
   farmName:   { color: "#FFF", fontWeight: 600, fontSize: "0.82rem" },
   farmDetail: { color: C.sidebarText, fontSize: "0.72rem", marginTop: 3, lineHeight: 1.45, opacity: 0.8 },
 
-  // Mobile bottom tab bar
-  bottomBar:    { position: "fixed", bottom: 0, left: 0, right: 0, height: 60, background: C.sidebarBg, display: "flex", zIndex: 900, boxShadow: "0 -2px 8px rgba(0,0,0,0.15)", paddingBottom: "env(safe-area-inset-bottom, 0px)" },
-  bottomItem:   { flex: 1, minWidth: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 2, background: "none", border: "none", color: C.sidebarText, cursor: "pointer", padding: "0.3rem 0.1rem" },
-  bottomItemOn: { color: "#FFF" },
-  bottomIcon:   { fontSize: "1.1rem" },
-  bottomLabel:  { fontSize: "0.62rem", fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: "100%" },
+  // Mobile top bar + hamburger drawer
+  topBar:          { position: "sticky", top: 0, height: 52, background: C.sidebarBg, display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 0.9rem", zIndex: 800, boxShadow: "0 1px 4px rgba(0,0,0,0.15)" },
+  hamburgerBtn:    { width: 32, height: 32, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 4, background: "none", border: "none", cursor: "pointer" },
+  hamburgerLine:   { width: 18, height: 2, background: "#FFF", borderRadius: 2 },
+  topBarTitle:     { color: "#FFF", fontWeight: 700, fontSize: "0.95rem" },
+  drawerBackdrop:  { position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", zIndex: 950 },
+  drawer:          { position: "fixed", top: 0, left: 0, bottom: 0, width: "78%", maxWidth: 280, background: C.sidebarBg, zIndex: 960, display: "flex", flexDirection: "column", overflowY: "auto", boxShadow: "2px 0 12px rgba(0,0,0,0.25)" },
+
+  // Tablet tier: collapsed icon-only rail
+  rail:       { width: 56, minWidth: 56, background: C.sidebarBg, display: "flex", flexDirection: "column", alignItems: "center", height: "100vh", position: "sticky", top: 0 },
+  railHeader: { padding: "1.2rem 0 0.9rem", fontSize: "1.3rem" },
+  railNav:    { display: "flex", flexDirection: "column", gap: 4, width: "100%" },
+  railItem:   { width: "100%", display: "flex", justifyContent: "center", padding: "0.65rem 0", background: "none", border: "none", borderLeft: "3px solid transparent", cursor: "pointer" },
+  railItemOn: { background: C.sidebarActive, borderLeft: "3px solid #9ED46A" },
+  railIcon:   { fontSize: "1.15rem" },
 };
 
 // ── Shared atoms ──────────────────────────────────────────────────────────────
@@ -199,7 +287,7 @@ const QA_BUTTONS = [
   { id: "diagnose",    icon: "🩺", label: "Diagnose",     primary: false },
 ];
 
-function HomeSection({ userData, activities, userId, setSection, bumpAddPlanting, openLogModal, isMobile }) {
+function HomeSection({ userData, activities, userId, setSection, bumpAddPlanting, openLogModal }) {
 
   // ── Derive beds from crop_plan activities ─────────────────────────────────
   const beds = activities
@@ -222,6 +310,7 @@ function HomeSection({ userData, activities, userId, setSection, bumpAddPlanting
 
   // ── Today's tasks: reminders + upcoming crop events ───────────────────────
   const today   = new Date(); today.setHours(0, 0, 0, 0);
+  const in14    = new Date(today.getTime() + 14 * 864e5);
 
   const reminders = activities
     .filter(a => a.type === "reminder" && a.status !== "completed")
@@ -251,7 +340,7 @@ function HomeSection({ userData, activities, userId, setSection, bumpAddPlanting
       </div>
 
       {/* Pressure cards */}
-      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(3,1fr)", gap: "1rem", marginBottom: "1.1rem" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "1rem", marginBottom: "1.1rem" }}>
         <Card style={{ borderLeft: `4px solid ${C.red}`, background: C.redLight }}>
           <div style={pressLabel("#7F1D1D")}>🐛 PEST PRESSURE</div>
           <div style={pressVal(C.red)}>{pestLevel}</div>
@@ -276,7 +365,7 @@ function HomeSection({ userData, activities, userId, setSection, bumpAddPlanting
       </div>
 
       {/* Stats row */}
-      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "repeat(2,1fr)" : "repeat(4,1fr)", gap: "1rem", marginBottom: "1.1rem" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(110px, 1fr))", gap: "1rem", marginBottom: "1.1rem" }}>
         {[
           { v: beds.length || userData?.stats?.cropsPlanted || 0, l: "Active Beds"   },
           { v: `${userData?.stats?.cropsHarvested || 0}`,          l: "Harvested"     },
@@ -302,7 +391,7 @@ function HomeSection({ userData, activities, userId, setSection, bumpAddPlanting
       {/* Quick Actions */}
       <Card style={{ marginBottom: "1.1rem" }}>
         <h3 style={{ margin: "0 0 0.9rem", fontSize: "0.95rem" }}>⚡ Quick Actions</h3>
-        <div style={{ display: "grid", gridTemplateColumns: isMobile ? "repeat(3,1fr)" : "repeat(4,1fr)", gap: "0.65rem" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(80px, 1fr))", gap: "0.65rem" }}>
           {QA_BUTTONS.map((q, i) => (
             <button
               key={i}
@@ -321,7 +410,7 @@ function HomeSection({ userData, activities, userId, setSection, bumpAddPlanting
       </Card>
 
       {/* Growing Now + Today's Tasks */}
-      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: "1.1rem", marginBottom: "1.1rem" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: "1.1rem", marginBottom: "1.1rem" }}>
         <Card>
           <h3 style={{ margin: "0 0 0.9rem", fontSize: "0.95rem" }}>🌿 Growing Now</h3>
           {beds.length > 0 ? beds.map((b, i) => (
@@ -409,7 +498,7 @@ const LOG_TYPES = {
     title: "Log Harvest", icon: "🌾",
     fields: [
       { key: "crop",     label: "Crop",           type: "text",   required: true, placeholder: "e.g. Bok Choy" },
-      { key: "bedLabel", label: "Bed",             type: "text",   placeholder: "e.g. Beds 1 & 2" },
+      { key: "bed",     label: "Bed",             type: "text",   placeholder: "e.g. Beds 1 & 2" },
       { key: "quantity", label: "Quantity",        type: "number", required: true, placeholder: "48" },
       { key: "unit",     label: "Unit",            type: "select", options: ["lbs", "oz", "units", "bunches"] },
       { key: "quality",  label: "Quality",         type: "select", options: ["Excellent", "Good", "Fair", "Poor"] },
@@ -417,7 +506,7 @@ const LOG_TYPES = {
     ],
     build: (d) => ({
       title:   `Harvest · ${d.crop || "Crop"}`,
-      message: `${d.quantity || "—"} ${d.unit || ""} · ${d.bedLabel || "unspecified bed"}${d.quality ? ` · ${d.quality}` : ""}`,
+      message: `${d.quantity || "—"} ${d.unit || ""} · ${d.bed || "unspecified bed"}${d.quality ? ` · ${d.quality}` : ""}`,
     }),
   },
   sale: {
@@ -456,13 +545,13 @@ const LOG_TYPES = {
   observation: {
     title: "Log Observation", icon: "👁️",
     fields: [
-      { key: "bedLabel",    label: "Bed",         type: "text",   placeholder: "e.g. Bed 3" },
-      { key: "observation", label: "What did you see?", type: "textarea", required: true },
+      { key: "bed",         label: "Bed",         type: "text",   placeholder: "e.g. Bed 3" },
+      { key: "note",        label: "What did you see?", type: "textarea", required: true },
       { key: "flag",        label: "Flag",        type: "select", options: ["None", "Monitor", "Urgent"] },
     ],
     build: (d) => ({
-      title:   `Observation · ${d.bedLabel || "Farm"}`,
-      message: d.observation || "",
+      title:   `Observation · ${d.bed || "Farm"}`,
+      message: d.note || "",
     }),
   },
   amendment: {
@@ -603,7 +692,7 @@ const flowOptFull = { width: "100%", padding: "0.7rem 0.9rem", borderRadius: 8, 
 // Beds are derived from activities where type === "crop_plan" && status === "planned"
 // Seedling nursery and season rotation are derived from the same source.
 
-function FarmSection({ userData, activities, userId, addPlantingSignal, bumpAddPlanting, isMobile }) {
+function FarmSection({ userData, activities, userId, addPlantingSignal, bumpAddPlanting }) {
   const island = typeof userData?.location === "string"
     ? userData.location
     : userData?.location?.island || "—";
@@ -652,7 +741,7 @@ function FarmSection({ userData, activities, userId, addPlantingSignal, bumpAddP
         <CropPlanner userData={{ ...userData, userId }} autoOpenSignal={addPlantingSignal} />
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: "1.1rem" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: "1.1rem" }}>
         {/* Seedling nursery */}
         <Card>
           <h3 style={{ margin: "0 0 0.9rem", fontSize: "0.95rem" }}>🌱 Seedling Nursery</h3>
@@ -978,7 +1067,7 @@ const GUIDED_CHOOSER = {
   ],
 };
 
-function CropDoctorSection({ userData, activities, userId, refetchActivities, isMobile }) {
+function CropDoctorSection({ userData, activities, userId, refetchActivities }) {
   const [modal,      setModal]      = useState(null);   // pest | disease | nutrient | guided
   const [activeType, setActiveType] = useState(null);   // resolved tree once known
   const [step,       setStep]       = useState(0);
@@ -1070,7 +1159,7 @@ function CropDoctorSection({ userData, activities, userId, refetchActivities, is
 
       <Card style={{ marginBottom: "1.1rem" }}>
         <h3 style={{ margin: "0 0 0.9rem", fontSize: "0.95rem" }}>What is going on with your plant?</h3>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.75rem" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: "0.75rem" }}>
           {ENTRIES.map(e => (
             <button key={e.id} onClick={() => openModal(e.id)} style={docCard}>
               <div style={{ fontSize: "1.4rem", marginBottom: "0.35rem" }}>{e.icon}</div>
@@ -1207,7 +1296,7 @@ function useInputLibrary() {
   return { inputs, rules, status, refetch: () => setReload(r => r + 1) };
 }
 
-function InputLibrarySection({ userId, isMobile }) {
+function InputLibrarySection({ userId }) {
   const { inputs, rules, status, refetch } = useInputLibrary();
   const [sel, setSel] = useState([]);
   const [showAdd, setShowAdd] = useState(false);
@@ -1253,7 +1342,7 @@ function InputLibrarySection({ userId, isMobile }) {
       {status === "error"   && <p style={{ color: C.red, fontSize: "0.85rem" }}>Couldn't load inputs. Try again shortly.</p>}
 
       {status === "ready" && (
-      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "repeat(2,1fr)" : "repeat(3,1fr)", gap: "0.9rem", marginBottom: "1.4rem" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: "0.9rem", marginBottom: "1.4rem" }}>
         {inputs.length === 0 && (
           <p style={{ color: C.textMuted, fontSize: "0.85rem", gridColumn: "1 / -1" }}>
             No products yet. Add your first one below.
@@ -1453,7 +1542,7 @@ const filtOn = { background: C.green, color: "#fff", border: `1px solid ${C.gree
 // Fields mirror what onUserCreate seeds and Profile.jsx writes:
 // name, email, planType, farmName, location.island, soilType, irrigation, farmSize
 
-function ProfileSection({ userData, isMobile }) {
+function ProfileSection({ userData }) {
   const u      = userData || {};
   const island = typeof u.location === "string"
     ? u.location
@@ -1466,7 +1555,7 @@ function ProfileSection({ userData, isMobile }) {
   return (
     <div>
       <SectionHead title="👤 Profile & Settings" />
-      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: "1.1rem" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: "1.1rem" }}>
         <Card>
           <h3 style={{ margin: "0 0 1.1rem", fontSize: "0.95rem", fontWeight: 700 }}>Personal Info</h3>
           {[
@@ -1515,7 +1604,8 @@ function ProfileSection({ userData, isMobile }) {
 
 // ── ROOT ──────────────────────────────────────────────────────────────────────
 export default function GrowerDashboard() {
-  const isMobile = useIsMobile();
+  const viewport = useViewport();
+  const isMobile = viewport === "mobile";
   const [section,    setSection]    = useState("home");
   const [addPlantingSignal, setAddPlantingSignal] = useState(0);
   const [logModalType, setLogModalType] = useState(null); // harvest|sale|spray|observation|amendment|restock
@@ -1595,7 +1685,7 @@ export default function GrowerDashboard() {
   }
 
   const shared = {
-    userData, activities, userId, setSection, isMobile,
+    userData, activities, userId, setSection,
     bumpAddPlanting: () => setAddPlantingSignal(s => s + 1),
     openLogModal: (type) => setLogModalType(type),
     refetchActivities,
@@ -1603,12 +1693,12 @@ export default function GrowerDashboard() {
 
   return (
     <div style={{ display: "flex", flexDirection: isMobile ? "column" : "row", height: "100vh", overflow: "hidden", fontFamily: "'Inter',sans-serif" }}>
-      <Sidebar active={section} setActive={setSection} userData={userData} isMobile={isMobile} />
+      <Sidebar active={section} setActive={setSection} userData={userData} viewport={viewport} />
       <main style={{
         flex: 1,
         overflowY: "auto",
         background: C.cream,
-        padding: isMobile ? "1rem 1rem 5rem" : "1.75rem 2rem",
+        padding: "clamp(1rem, 3vw, 1.75rem) clamp(1rem, 4vw, 2rem)",
         width: "100%",
       }}>
         <motion.div
@@ -1621,7 +1711,7 @@ export default function GrowerDashboard() {
           {section === "farm"    && <FarmSection      {...shared} addPlantingSignal={addPlantingSignal} />}
           {section === "market"  && <MarketSection    {...shared} />}
           {section === "doctor"  && <CropDoctorSection {...shared} />}
-          {section === "inputs"  && <InputLibrarySection userId={userId} isMobile={isMobile} />}
+          {section === "inputs"  && <InputLibrarySection userId={userId} />}
           {section === "history" && <HistorySection   {...shared} />}
           {section === "profile" && <ProfileSection   {...shared} />}
         </motion.div>
