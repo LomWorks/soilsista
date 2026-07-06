@@ -177,13 +177,6 @@ export default function CropPlanner({ userData, autoOpenSignal }) {
   // Real market prices — used for the value-estimate column when a match
   // exists. Shows "—" rather than a made-up number when it doesn't.
   const [marketPrices, setMarketPrices] = useState([]);
-
-  useEffect(() => {
-    if (userData?.growingSeasonWeeks)) {
-      setGrowingSeasonWeeks(userData.growingSeasonWeeks); 
-    }
-  }, [userData]); 
-  
   useEffect(() => {
     (async () => {
       try {
@@ -566,7 +559,7 @@ export default function CropPlanner({ userData, autoOpenSignal }) {
                 <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
                   <div style={s.wizLabel}>Bed Dimensions</div>
                   <div style={s.formRow}>
-                    <div style={{ flex: 1 }}>
+                    <div style={{ flex: 1, minWidth: 130 }}>
                       <label style={s.label}>Length (ft) *</label>
                       <input
                         type="number" min="0" step="0.5" value={bedLengthFt}
@@ -574,7 +567,7 @@ export default function CropPlanner({ userData, autoOpenSignal }) {
                         placeholder="e.g. 8" style={{ ...s.input, borderColor: errors.length ? "#ef4444" : "#ddd" }}
                       />
                     </div>
-                    <div style={{ flex: 1 }}>
+                    <div style={{ flex: 1, minWidth: 130 }}>
                       <label style={s.label}>Width (ft) *</label>
                       <input
                         type="number" min="0" step="0.5" value={bedWidthFt}
@@ -584,7 +577,7 @@ export default function CropPlanner({ userData, autoOpenSignal }) {
                     </div>
                   </div>
                   <div style={s.formRow}>
-                    <div style={{ flex: 1 }}>
+                    <div style={{ flex: 1, minWidth: 130 }}>
                       <label style={s.label}># Beds *</label>
                       <input
                         type="number" min="1" max="100" value={numBeds}
@@ -592,7 +585,7 @@ export default function CropPlanner({ userData, autoOpenSignal }) {
                         style={{ ...s.input, borderColor: errors.beds ? "#ef4444" : "#ddd" }}
                       />
                     </div>
-                    <div style={{ flex: 1 }}>
+                    <div style={{ flex: 1, minWidth: 130 }}>
                       <label style={s.label}># Rows/bed *</label>
                       <input
                         type="number" min="1" max="20" value={bedRows}
@@ -923,7 +916,7 @@ const s = {
 
   // Form
   formGroup: { marginBottom: "0.75rem" },
-  formRow: { display: "flex", gap: "0.75rem", marginBottom: "0.75rem" },
+  formRow: { display: "flex", gap: "0.75rem", marginBottom: "0.75rem", flexWrap: "wrap" },
   label: { display: "block", fontSize: "0.88rem", fontWeight: "600", color: "var(--ink-black)", marginBottom: "0.4rem" },
   labelHint: { fontWeight: 400, color: "#999", fontSize: "0.82rem" },
   geometryPreview: {
