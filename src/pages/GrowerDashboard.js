@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from "react";
 import { db, auth } from "../firebase";
 import {
   doc, getDoc, collection, query, where, orderBy, limit,
-  getDocs, addDoc, serverTimestamp,
+  getDocs, addDoc, updateDoc, serverTimestamp,
 } from "firebase/firestore";
 import { onAuthStateChanged } from "firebase/auth";
 import { motion, AnimatePresence } from "framer-motion";
@@ -287,18 +287,17 @@ const QA_BUTTONS = [
   { id: "diagnose",    icon: "🩺", label: "Diagnose",     primary: false },
 ];
 
-function HomeSection({ userData, activities, userId, setSection, bumpAddPlanting, openLogModal }) {
+function HomeSection({ userData, activities, plantings = [], userId, setSection, bumpAddPlanting, openLogModal }) {
 
-  // ── Derive beds from crop_plan activities ─────────────────────────────────
-  const beds = activities
-    .filter(a => a.type === "crop_plan" && a.status === "planned")
-    .map(a => {
-      const d = a.data || {};
-      const days = daysUntil(d.harvestStart || d.harvestDate);
+  // ── Derive beds from plantings (source of truth) — only still-growing ──────
+  const beds = plantings
+    .filter(p => p.harvested !== true)
+    .map(p => {
+      const days = daysUntil(p.harvestStart);
       return {
-        crop:   d.cropName    || a.title?.replace(" Planting Plan", "") || "Crop",
-        plants: d.plantsCount || d.seedsNeeded || "—",
-        bed:    d.bedLabel    || d.location    || "—",
+        crop:   p.label || p.cropName || "Crop",
+        plants: p.totalPlants || p.plantsPerBed || "—",
+        bed:    p.numBeds ? `${p.numBeds} bed${p.numBeds > 1 ? "s" : ""}` : "—",
         days,
         label:  harvestLabel(days),
       };
@@ -494,8 +493,7 @@ const LOG_TYPES = {
   harvest: {
     title: "Log Harvest", icon: "🌾",
     fields: [
-      { key: "crop",     label: "Crop",           type: "text",   required: true, placeholder: "e.g. Bok Choy" },
-      { key: "bed",     label: "Bed",             type: "text",   placeholder: "e.g. Beds 1 & 2" },
+      { key: "plantingId", label: "Which planting?", type: "planting", required: true },
       { key: "quantity", label: "Quantity",        type: "number", required: true, placeholder: "48" },
       { key: "unit",     label: "Unit",            type: "select", options: ["lbs", "oz", "units", "bunches"] },
       { key: "quality",  label: "Quality",         type: "select", options: ["Excellent", "Good", "Fair", "Poor"] },
@@ -503,7 +501,7 @@ const LOG_TYPES = {
     ],
     build: (d) => ({
       title:   `Harvest · ${d.crop || "Crop"}`,
-      message: `${d.quantity || "—"} ${d.unit || ""} · ${d.bed || "unspecified bed"}${d.quality ? ` · ${d.quality}` : ""}`,
+      message: `${d.quantity || "—"} ${d.unit || ""}${d.quality ? ` · ${d.quality}` : ""}`,
     }),
   },
   sale: {
@@ -580,8 +578,9 @@ const LOG_TYPES = {
   },
 };
 
-function LogActivityModal({ type, userId, onClose, onSaved }) {
+function LogActivityModal({ type, userId, plantings = [], onClose, onSaved }) {
   const cfg = LOG_TYPES[type];
+  const growingPlantings = plantings.filter(p => p.harvested !== true);
   const [data, setData] = useState({});
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
@@ -597,7 +596,17 @@ function LogActivityModal({ type, userId, onClose, onSaved }) {
     setSaving(true);
     setError(null);
     try {
-      const built = cfg.build(data);
+      // If harvesting, resolve the chosen planting so we can label the log and
+      // mark it harvested.
+      let harvestedPlanting = null;
+      if (type === "harvest" && data.plantingId) {
+        harvestedPlanting = growingPlantings.find(p => p.id === data.plantingId) || null;
+      }
+      const enriched = harvestedPlanting
+        ? { ...data, crop: harvestedPlanting.label || harvestedPlanting.cropName }
+        : data;
+
+      const built = cfg.build(enriched);
       await addDoc(collection(db, "activities"), {
         userId,
         type,
@@ -606,10 +615,20 @@ function LogActivityModal({ type, userId, onClose, onSaved }) {
         message: built.message,
         icon:    cfg.icon,
         status:  "logged",
-        data:    { ...data, ...(built.extra || {}), loggedAt: new Date().toISOString() },
+        data:    { ...enriched, ...(built.extra || {}), loggedAt: new Date().toISOString() },
         createdAt: serverTimestamp(),
         expiresAt: null,
       });
+
+      // A harvested crop is no longer growing — flip harvested:true on the
+      // exact planting the user picked (reliable, no name-matching).
+      if (type === "harvest" && harvestedPlanting) {
+        await updateDoc(doc(db, "plantings", harvestedPlanting.id), {
+          harvested: true,
+          harvestedAt: new Date().toISOString(),
+        }).catch(err => console.error("Failed to mark planting harvested:", err));
+      }
+
       onSaved();
     } catch (e) {
       console.error(`Failed to save ${type}:`, e);
@@ -638,7 +657,26 @@ function LogActivityModal({ type, userId, onClose, onSaved }) {
               <label style={{ display: "block", fontSize: "0.76rem", fontWeight: 600, color: C.textMuted, marginBottom: "0.3rem" }}>
                 {f.label}{f.required ? " *" : ""}
               </label>
-              {f.type === "select" ? (
+              {f.type === "planting" ? (
+                growingPlantings.length > 0 ? (
+                  <select
+                    value={data[f.key] || ""}
+                    onChange={e => set(f.key, e.target.value)}
+                    style={inputStyle}
+                  >
+                    <option value="">Select a crop…</option>
+                    {growingPlantings.map(p => (
+                      <option key={p.id} value={p.id}>
+                        {(p.label || p.cropName)}{p.numBeds ? ` · ${p.numBeds} bed${p.numBeds > 1 ? "s" : ""}` : ""}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <div style={{ fontSize: "0.82rem", color: C.textMuted, padding: "0.55rem 0" }}>
+                    No growing crops to harvest. Add a planting first.
+                  </div>
+                )
+              ) : f.type === "select" ? (
                 <select
                   value={data[f.key] || ""}
                   onChange={e => set(f.key, e.target.value)}
@@ -686,38 +724,34 @@ const inputStyle = { width: "100%", padding: "0.55rem 0.7rem", border: `1px soli
 const flowOptFull = { width: "100%", padding: "0.7rem 0.9rem", borderRadius: 8, cursor: "pointer", textAlign: "center", fontSize: "0.85rem" };
 
 // ── FARM ──────────────────────────────────────────────────────────────────────
-// Beds are derived from activities where type === "crop_plan" && status === "planned"
-// Seedling nursery and season rotation are derived from the same source.
+// Beds are derived from the plantings collection (harvested !== true).
+// Seedling nursery is derived from the same source.
 
-function FarmSection({ userData, activities, userId, addPlantingSignal, bumpAddPlanting }) {
+function FarmSection({ userData, activities, plantings = [], userId, addPlantingSignal, bumpAddPlanting }) {
   const island = typeof userData?.location === "string"
     ? userData.location
     : userData?.location?.island || "—";
 
-  const beds = activities
-    .filter(a => a.type === "crop_plan" && a.status === "planned")
-    .map(a => {
-      const d = a.data || {};
-      const days = daysUntil(d.harvestStart || d.harvestDate);
+  const beds = plantings
+    .filter(p => p.harvested !== true)
+    .map(p => {
+      const days = daysUntil(p.harvestStart);
       return {
-        id:          a.id,
-        crop:        d.variant ? `${d.cropName} (${d.variant})` : (d.cropName || "Crop"),
-        beds:        d.numBeds ? `${d.numBeds} bed${d.numBeds > 1 ? "s" : ""}` : "1 bed",
-        plants:      d.seedsNeeded || "—",
-        transplanted: d.transplantDate
-          ? (d.transplantDate?.toDate ? d.transplantDate.toDate() : new Date(d.transplantDate))
-              .toLocaleDateString("en-US", { month: "short", day: "numeric" })
-          : "—",
+        id:          p.id,
+        crop:        p.label || p.cropName || "Crop",
+        beds:        p.numBeds ? `${p.numBeds} bed${p.numBeds > 1 ? "s" : ""}` : "1 bed",
+        plants:      p.totalPlants || p.plantsPerBed || "—",
+        transplanted: "—",
         rowSpacing:  "—",
-        plantSpacing: typeof d.spacing === "string" ? d.spacing : "—",
+        plantSpacing: "—",
         days,
         label:       harvestLabel(days),
-        est:         d.estimatedYield || null,
+        est:         p.estimatedYield || null,
       };
     });
 
-  // Seedling nursery: most recent crop_plan that has seedsNeeded field
-  const nursery = activities.find(a => a.type === "crop_plan" && a.status === "planned" && a.data?.seedsNeeded);
+  // Seedling nursery: the most recent still-growing planting with a plant count
+  const nursery = plantings.find(p => p.harvested !== true && (p.totalPlants || p.plantsPerBed));
 
   return (
     <div>
@@ -730,10 +764,10 @@ function FarmSection({ userData, activities, userId, addPlantingSignal, bumpAddP
         </div>
       </div>
 
-      {/* Real Add Planting flow — full crop database, moon-phase planning,
-          writes real crop_plan activities to Firestore. Triggered here via
-          its own "+ Add a crop" button, or externally from Home's Quick
-          Action via addPlantingSignal. */}
+      {/* Add Planting wizard — full crop database, moon-phase planning,
+          writes a planting (source of truth) + a crop_plan activity log entry.
+          Triggered here via its own "+ Add a crop" button, or externally from
+          Home's Quick Action via addPlantingSignal. */}
       <div style={{ marginBottom: "1.1rem" }}>
         <CropPlanner userData={{ ...userData, userId }} autoOpenSignal={addPlantingSignal} />
       </div>
@@ -743,12 +777,11 @@ function FarmSection({ userData, activities, userId, addPlantingSignal, bumpAddP
         <Card>
           <h3 style={{ margin: "0 0 0.9rem", fontSize: "0.95rem" }}>🌱 Seedling Nursery</h3>
           {nursery ? (() => {
-            const d       = nursery.data || {};
-            const req     = d.seedsNeeded  || 0;
-            const succ    = d.successCount || 0;
+            const req     = nursery.totalPlants || nursery.plantsPerBed || 0;
+            const succ    = nursery.successCount || 0;
             const rate    = req > 0 ? Math.round((succ / req) * 100) : 0;
             const short   = req - succ;
-            const varLabel = d.variant ? `${d.cropName} – ${d.variant}` : (d.cropName || "Seedlings");
+            const varLabel = nursery.label || nursery.cropName || "Seedlings";
             return (
               <>
                 <div style={{ fontWeight: 600, fontSize: "0.88rem" }}>{varLabel}</div>
@@ -1608,6 +1641,7 @@ export default function GrowerDashboard() {
   const [logModalType, setLogModalType] = useState(null); // harvest|sale|spray|observation|amendment|restock
   const [userData,   setUserData]   = useState(null);
   const [activities, setActivities] = useState([]);
+  const [plantings,  setPlantings]  = useState([]);
   const [userId,     setUserId]     = useState(null);
   const [loading,    setLoading]    = useState(true);
 
@@ -1628,6 +1662,22 @@ export default function GrowerDashboard() {
       setActivities(acts.docs.map(d => ({ id: d.id, ...d.data() })));
     } catch (e) {
       console.error("refetchActivities error:", e);
+    }
+  }, [userId]);
+
+  // Plantings — the source of truth for which crops are still growing.
+  const refetchPlantings = useCallback(async (uid) => {
+    const targetUid = uid || userId;
+    if (!targetUid) return;
+    try {
+      const q = query(
+        collection(db, "plantings"),
+        where("userId", "==", targetUid)
+      );
+      const snap = await getDocs(q);
+      setPlantings(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    } catch (e) {
+      console.error("refetchPlantings error:", e);
     }
   }, [userId]);
 
@@ -1654,6 +1704,7 @@ export default function GrowerDashboard() {
         // Read activities — filtered by userId, ordered by createdAt desc, limit 100
         // Firestore rules: activities readable only when resource.data.userId == auth.uid
         await refetchActivities(user.uid);
+        await refetchPlantings(user.uid);
       } catch (e) {
         console.error("GrowerDashboard load error:", e);
       } finally {
@@ -1668,7 +1719,7 @@ export default function GrowerDashboard() {
   // writes made by CropPlanner (Farm tab) that this component doesn't
   // otherwise get notified about.
   useEffect(() => {
-    if (userId) refetchActivities(userId);
+    if (userId) { refetchActivities(userId); refetchPlantings(userId); }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [section]);
 
@@ -1682,10 +1733,11 @@ export default function GrowerDashboard() {
   }
 
   const shared = {
-    userData, activities, userId, setSection,
+    userData, activities, plantings, userId, setSection,
     bumpAddPlanting: () => setAddPlantingSignal(s => s + 1),
     openLogModal: (type) => setLogModalType(type),
     refetchActivities,
+    refetchPlantings,
   };
 
   return (
@@ -1693,7 +1745,10 @@ export default function GrowerDashboard() {
       <Sidebar active={section} setActive={setSection} userData={userData} viewport={viewport} />
       <main style={{
         flex: 1,
+        minWidth: 0,
+        boxSizing: "border-box",
         overflowY: "auto",
+        overflowX: "hidden",
         background: C.cream,
         padding: "clamp(1rem, 3vw, 1.75rem) clamp(1rem, 4vw, 2rem)",
         width: "100%",
@@ -1718,9 +1773,11 @@ export default function GrowerDashboard() {
         <LogActivityModal
           type={logModalType}
           userId={userId}
+          plantings={plantings}
           onClose={() => setLogModalType(null)}
           onSaved={async () => {
             await refetchActivities(userId);
+            await refetchPlantings(userId);
             setLogModalType(null);
           }}
         />
