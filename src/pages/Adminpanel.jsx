@@ -247,6 +247,16 @@ export default function AdminPanel() {
     a.click();
   };
 
+  const handleLogout = async () => {
+    if (!window.confirm("Log out of admin panel?")) return;
+    try {
+      await auth.signOut();
+    } catch (error) {
+      console.error("Logout failed:", error);
+      alert("Failed to log out. Please try again.");
+    }
+  };
+
   // Login Screen
   if (!authChecked) {
     return (
@@ -308,10 +318,10 @@ export default function AdminPanel() {
             🔄 Refresh
           </button>
           <button 
-            onClick={() => auth.signOut()}
+            onClick={handleLogout}
             style={styles.logoutButton}
           >
-            Logout
+            🚪 Logout
           </button>
         </div>
       </motion.div>
@@ -471,7 +481,7 @@ function StatCard({ icon, label, value, subtitle, color, delay, highlight }) {
   );
 }
 
-// Contact Messages Tab - NEW!
+// Contact Messages Tab
 function ContactMessagesTab({ messages, onMarkAsRead, onMarkAsUnread, onDelete }) {
   const [filter, setFilter] = useState("all");
 
@@ -1226,7 +1236,8 @@ const styles = {
   },
   headerActions: {
     display: "flex",
-    gap: "1rem"
+    gap: "1rem",
+    flexShrink: 0
   },
   refreshButton: {
     padding: "0.75rem 1.5rem",
@@ -1241,10 +1252,12 @@ const styles = {
     padding: "0.75rem 1.5rem",
     background: "#ef4444",
     color: "white",
-    border: "none",
+    border: "2px solid #dc2626",
     borderRadius: "8px",
     cursor: "pointer",
-    fontWeight: "600"
+    fontWeight: "600",
+    minWidth: "110px",
+    flexShrink: 0
   },
   statsGrid: {
     display: "grid",
