@@ -4,7 +4,7 @@ import {
   doc, getDoc, collection, query, where, orderBy, limit,
   getDocs, addDoc, updateDoc, serverTimestamp,
 } from "firebase/firestore";
-import { onAuthStateChanged } from "firebase/auth";
+import { onAuthStateChanged, signOut } from "firebase/auth";
 import { motion, AnimatePresence } from "framer-motion";
 import CropPlanner from "../components/CropPlanner";
 import WeatherWidget from "../components/WeatherWidget";
@@ -74,6 +74,16 @@ const NAV = [
   { id: "profile", icon: "👤", label: "Profile"       },
 ];
 
+// ── Logout ────────────────────────────────────────────────────────────────────
+async function handleLogout() {
+  try {
+    await signOut(auth);
+    window.location.href = "/get-started";
+  } catch (e) {
+    console.error("Logout failed:", e);
+  }
+}
+
 // ── Sidebar ───────────────────────────────────────────────────────────────────
 function Sidebar({ active, setActive, userData, viewport }) {
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -134,6 +144,12 @@ function Sidebar({ active, setActive, userData, viewport }) {
                     </div>
                   </div>
                 )}
+                <div style={ss.logoutWrap}>
+                  <button style={ss.logoutBtn} onClick={handleLogout}>
+                    <span style={ss.icon}>🚪</span>
+                    Log Out
+                  </button>
+                </div>
               </motion.aside>
             </>
           )}
@@ -160,6 +176,9 @@ function Sidebar({ active, setActive, userData, viewport }) {
             </button>
           ))}
         </nav>
+        <button style={ss.railLogoutBtn} onClick={handleLogout} title="Log Out">
+          <span style={ss.railIcon}>🚪</span>
+        </button>
       </aside>
     );
   }
@@ -190,6 +209,12 @@ function Sidebar({ active, setActive, userData, viewport }) {
           </div>
         </div>
       )}
+      <div style={ss.logoutWrap}>
+        <button style={ss.logoutBtn} onClick={handleLogout}>
+          <span style={ss.icon}>🚪</span>
+          Log Out
+        </button>
+      </div>
     </aside>
   );
 }
@@ -207,6 +232,10 @@ const ss = {
   farmName:   { color: "#FFF", fontWeight: 600, fontSize: "0.82rem" },
   farmDetail: { color: C.sidebarText, fontSize: "0.72rem", marginTop: 3, lineHeight: 1.45, opacity: 0.8 },
 
+  // Logout (mobile drawer + desktop rail)
+  logoutWrap: { padding: "0.65rem 0.85rem 0.9rem", borderTop: `1px solid ${C.sidebarBorder}` },
+  logoutBtn:  { display: "flex", alignItems: "center", gap: "0.6rem", width: "100%", padding: "0.6rem 0.75rem", background: "rgba(0,0,0,0.18)", border: "none", borderRadius: 8, color: C.sidebarText, fontSize: "0.85rem", fontWeight: 600, cursor: "pointer", textAlign: "left" },
+
   // Mobile top bar + hamburger drawer
   topBar:          { position: "sticky", top: 0, height: 52, background: C.sidebarBg, display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 0.9rem", zIndex: 800, boxShadow: "0 1px 4px rgba(0,0,0,0.15)" },
   hamburgerBtn:    { width: 32, height: 32, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 4, background: "none", border: "none", cursor: "pointer" },
@@ -222,6 +251,7 @@ const ss = {
   railItem:   { width: "100%", display: "flex", justifyContent: "center", padding: "0.65rem 0", background: "none", border: "none", borderLeft: "3px solid transparent", cursor: "pointer" },
   railItemOn: { background: C.sidebarActive, borderLeft: "3px solid #9ED46A" },
   railIcon:   { fontSize: "1.15rem" },
+  railLogoutBtn: { width: "100%", display: "flex", justifyContent: "center", padding: "0.75rem 0", marginTop: "auto", marginBottom: "0.5rem", background: "none", border: "none", borderTop: `1px solid ${C.sidebarBorder}`, cursor: "pointer" },
 };
 
 // ── Shared atoms ──────────────────────────────────────────────────────────────
@@ -1620,13 +1650,19 @@ function ProfileSection({ userData }) {
         </Card>
       </div>
 
-      <div style={{ marginTop: "1.1rem" }}>
+      <div style={{ marginTop: "1.1rem", display: "flex", gap: "0.75rem", flexWrap: "wrap" }}>
         <a
           href="/profile"
           style={{ display: "inline-block", background: C.green, color: "#fff", borderRadius: 8, padding: "0.65rem 1.25rem", fontWeight: 600, fontSize: "0.88rem", textDecoration: "none" }}
         >
           Edit Full Profile →
         </a>
+        <button
+          onClick={handleLogout}
+          style={{ display: "inline-flex", alignItems: "center", gap: "0.5rem", background: "none", color: C.red, border: `1px solid ${C.red}`, borderRadius: 8, padding: "0.65rem 1.25rem", fontWeight: 600, fontSize: "0.88rem", cursor: "pointer" }}
+        >
+          🚪 Log Out
+        </button>
       </div>
     </div>
   );
@@ -1784,4 +1820,3 @@ export default function GrowerDashboard() {
       )}
     </div>
   );
-}
